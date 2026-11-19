@@ -578,8 +578,12 @@ const recipe = (id) => db.get('recipes', id);
 const dishName = (d) => (d.recipe ? recipe(d.recipe)?.name || '(plato borrado)' : d.text);
 const weekKey = (offset) => addDays(mondayOf(today()), offset * 7);
 function menuDay(date) { const w = db.raw().menu[mondayOf(date)]; return w ? w.find((x) => x.date === date) : null; }
+// Alimentos que no deben salir en los menús (alergias): kv «avoidFoods» { words: [...], note }.
+const avoidWords = () => ((db.raw().avoidFoods || {}).words || []).map((w) => w.toLowerCase());
+const unsafe = (r) => { const w = avoidWords(); if (!w.length || !r) return false; const txt = [r.name, ...(r.ingredients || []).map((i) => i.name)].join(' ').toLowerCase(); return w.some((x) => txt.includes(x)); };
+const safeRecipes = () => db.all('recipes').filter((r) => !unsafe(r));
 function randomRecipe(exclude) {
-  const all = db.all('recipes');
+  const all = safeRecipes();
   const pool = all.filter((r) => !exclude.includes(r.id));
   const src = pool.length ? pool : all;
   return src.length ? src[Math.floor(Math.random() * src.length)].id : null;
@@ -598,7 +602,7 @@ const schoolLunch = (date) => (db.raw().schoolMenu || {})[date] || '';
 // Lo que ya han comido en el cole ese día: tipos de proteína que conviene no repetir en la cena.
 const lunchKinds = (date) => { const t = schoolLunch(date); return Object.keys(KIND_WORDS).filter((k) => KIND_WORDS[k].test(t)); };
 function pickRecipe(meal, date, used, usedKinds) {
-  const all = db.all('recipes');
+  const all = safeRecipes();
   const avoid = meal === 'cena' ? lunchKinds(date) : [];
   const fits = (r) => (r.when || 'ambas') === 'ambas' || r.when === meal;
   const tiers = [
@@ -675,7 +679,7 @@ function recetario() {
   <p class="small">Vuestros platos de siempre. El menú de la semana se propone a partir de aquí y sus ingredientes van a la compra.</p>
   ${form || `<button class="btn block" data-a="recipe-edit" data-id="new">${svg('plus', 18)}Nuevo plato</button>`}
   <div class="card"><div class="list">${recipes.map((x) => `<button class="item" data-a="recipe-edit" data-id="${x.id}" style="border-left:none;border-right:none;border-bottom:none;background:none;text-align:left;width:100%">
-    <span class="grow"><span class="t">${esc(x.name)}</span><span class="s">${x.kind ? esc(KINDS[x.kind] || '') + ' · ' : ''}${esc(x.ingredients.map((i) => i.name).join(', '))}</span></span>${svg('edit', 18)}</button>`).join('')}</div></div>`;
+    <span class="grow"><span class="t">${esc(x.name)}</span><span class="s">${x.kind ? esc(KINDS[x.kind] || '') + ' · ' : ''}${unsafe(x) ? `<b style="color:#B3261E">⚠️ No apto: ${esc((db.raw().avoidFoods || {}).note || 'alergia')} · </b>` : ''}${esc(x.ingredients.map((i) => i.name).join(', '))}</span></span>${svg('edit', 18)}</button>`).join('')}</div></div>`;
 }
 function parseIngredients(text) {
   return text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {

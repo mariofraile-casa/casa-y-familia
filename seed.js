@@ -27,10 +27,10 @@ export function seed() {
     // Recetario mediterráneo: cenas ligeras con proteína y verdura; los fines de semana, comidas.
     // Pensado para 4 (dos adultos y dos niños). Se puede cambiar desde la app.
     recipes: [
-      r('Merluza al horno con verduras', 'pescado', 'cena', [i(600, 'g', 'Merluza'), i(2, 'ud', 'Calabacín'), i(1, 'ud', 'Cebolla'), i(1, 'ud', 'Pimiento rojo'), i(1, 'ud', 'Limón')]),
+      r('Bonito a la plancha con pimientos y cebolla', 'pescado', 'cena', [i(600, 'g', 'Bonito'), i(2, 'ud', 'Pimiento rojo'), i(1, 'ud', 'Cebolla'), i(1, 'ud', 'Limón')]),
       r('Salmón a la plancha con brócoli', 'pescado', 'cena', [i(600, 'g', 'Salmón'), i(1, 'ud', 'Brócoli'), i(1, 'ud', 'Limón')]),
-      r('Lubina al horno con patata panadera', 'pescado', 'ambas', [i(2, 'ud', 'Lubina'), i(500, 'g', 'Patatas'), i(1, 'ud', 'Cebolla'), i(1, 'ud', 'Limón')]),
-      r('Bacalao con tomate y pimientos', 'pescado', 'cena', [i(600, 'g', 'Bacalao desalado'), i(1, 'bote', 'Tomate triturado'), i(2, 'ud', 'Pimiento rojo'), i(1, 'ud', 'Cebolla')]),
+      r('Salmón al horno con patata panadera', 'pescado', 'ambas', [i(600, 'g', 'Salmón'), i(500, 'g', 'Patatas'), i(1, 'ud', 'Cebolla'), i(1, 'ud', 'Limón')]),
+      r('Sardinas al horno con tomate y pimientos', 'pescado', 'cena', [i(600, 'g', 'Sardinas limpias'), i(1, 'bote', 'Tomate triturado'), i(2, 'ud', 'Pimiento rojo'), i(1, 'ud', 'Cebolla')]),
       r('Sepia a la plancha con ensalada', 'pescado', 'cena', [i(600, 'g', 'Sepia'), i(1, 'ud', 'Lechuga'), i(3, 'ud', 'Tomates'), i(1, 'ud', 'Pepino')]),
       r('Tortilla francesa con espinacas y ensalada de tomate', 'huevo', 'cena', [i(8, 'ud', 'Huevos'), i(200, 'g', 'Espinacas'), i(4, 'ud', 'Tomates')]),
       r('Revuelto de champiñones y gambas', 'huevo', 'cena', [i(6, 'ud', 'Huevos'), i(300, 'g', 'Champiñones'), i(200, 'g', 'Gambas peladas'), i(1, 'ud', 'Ajo')]),
