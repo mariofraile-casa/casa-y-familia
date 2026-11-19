@@ -157,12 +157,24 @@ function itemsOn(date) {
   for (const p of people()) {
     if (p.cumple && p.cumple.slice(5) === date.slice(5)) out.push({ who: [p.id], kind: 'bday', title: `Cumple de ${p.name}`, sub: '' });
   }
+  // Cole: días sin clase, vacaciones, vuelta al cole y fin de curso (kv «schoolCal»).
+  const sc = db.raw().schoolCal;
+  if (sc) {
+    const kidsIds = kids().map((p) => p.id);
+    const note = (sc.notes || {})[date];
+    const period = (sc.periods || []).find((x) => date >= x.from && date <= x.to);
+    if (note) out.push({ who: kidsIds, kind: 'nocole', title: note, short: note.split(/[·(]/)[0].trim(), sub: 'Cole' });
+    else if (isoDow(date) <= 5 && (sc.off || []).includes(date)) out.push({ who: kidsIds, kind: 'nocole', title: period ? period.name : 'Sin cole', short: 'Sin cole', sub: 'Cole' });
+  }
+  // Festivos laborales de la Comunidad de Madrid (afectan a Mario): kv «holidays» { fecha: nombre }.
+  const hol = (db.raw().holidays || {})[date];
+  if (hol) out.push({ who: ['m'], kind: 'holiday', title: `Festivo de Mario · ${hol}`, short: 'Festivo', sub: 'Comunidad de Madrid' });
   return out.sort((a, b) => (toMin(a.time) ?? -1) - (toMin(b.time) ?? -1));
 }
 
 const AFT = [toMin('16:30'), toMin('20:30')];
 const overlapsAft = (start, end) => { const s = toMin(start); if (s == null) return false; const e = toMin(end) ?? s + 120; const e2 = e < s ? e + 1440 : e; return s < AFT[1] && e2 > AFT[0]; };
-const isSchoolDay = (d) => isoDow(d) <= 5;
+const isSchoolDay = (d) => isLectivo(d);
 const silviaOut = (d) => db.all('shifts').some((sh) => sh.date === d && WORK.has(sh.kind) && overlapsAft(sh.start, sh.end));
 const marioOut = (d) => db.all('events').some((ev) => (ev.who || []).includes('m') && occursOn(ev, d) && overlapsAft(ev.time, ev.endTime));
 function pickup(d) {
