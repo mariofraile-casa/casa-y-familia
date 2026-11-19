@@ -534,15 +534,19 @@ function addShopping(name, qty = 1, unit = 'ud', store) {
 function compra() {
   const stores = db.all('stores');
   const list = db.all('shopping');
-  const shop = ui.shop && stores.includes(ui.shop) ? ui.shop : stores[0];
-  const mode = `<div class="seg" role="group" aria-label="Modo"><button data-a="cmode" data-m="lista" ${pressed(ui.compraMode === 'lista')}>Preparar lista</button><button data-a="cmode" data-m="super" ${pressed(ui.compraMode === 'super')}>En el súper</button></div>`;
+  const shop = ui.shop && (ui.shop === 'all' || stores.includes(ui.shop)) ? ui.shop : 'all';
+  const inShop = (x) => shop === 'all' || x.store === shop;
+  const shopSeg = stores.length > 1 ? `<div class="seg" role="group" aria-label="Supermercado"><button data-a="shop" data-s="all" ${pressed(shop === 'all')}>Todo (${list.filter((x) => !x.done).length})</button>${stores.map((s) => `<button data-a="shop" data-s="${esc(s)}" ${pressed(s === shop)}>${esc(s)} (${list.filter((x) => x.store === s && !x.done).length})</button>`).join('')}</div>` : '';
+  const mode =`<div class="seg" role="group" aria-label="Modo"><button data-a="cmode" data-m="lista" ${pressed(ui.compraMode === 'lista')}>Preparar lista</button><button data-a="cmode" data-m="super" ${pressed(ui.compraMode === 'super')}>En el súper</button></div>`;
   if (ui.compraMode === 'super') {
-    const items = list.filter((x) => x.store === shop);
+    const items = list.filter(inShop);
     const done = items.filter((x) => x.done).length;
-    return `${bar('Compra')}${mode}
-    <div class="seg" role="group" aria-label="Supermercado">${stores.map((s) => `<button data-a="shop" data-s="${esc(s)}" ${pressed(s === shop)}>${esc(s)} (${list.filter((x) => x.store === s && !x.done).length})</button>`).join('')}</div>
-    <div class="card"><div class="list">${items.length ? items.sort((a, b) => a.done - b.done).map((x) => `<button class="item ${x.done ? 'done' : ''}" data-a="buy" data-id="${x.id}" style="border-left:none;border-right:none;border-bottom:none;background:none;text-align:left;width:100%">
-      <span class="check" ${pressed(x.done)}>${x.done ? svg('check', 16, 3) : ''}</span><span class="grow"><span class="t">${esc(x.name)}</span></span><span class="s">${fmtQty(x)}</span></button>`).join('') : '<p class="empty">Nada para este súper.</p>'}</div></div>
+    const showGot = ui.showGot !== false;
+    const visible = items.filter((x) => showGot || !x.done).sort((a, b) => a.done - b.done);
+    return `${bar('Compra')}${mode}${shopSeg}
+    <div class="seg" role="group" aria-label="Qué ver"><button data-a="showgot" data-v="1" ${pressed(showGot)}>Ver todo</button><button data-a="showgot" data-v="0" ${pressed(!showGot)}>Solo lo que falta (${items.length - done})</button></div>
+    <div class="card"><div class="list">${visible.length ? visible.map((x) => `<button class="item ${x.done ? 'done' : ''}" data-a="buy" data-id="${x.id}" style="border-left:none;border-right:none;border-bottom:none;background:none;text-align:left;width:100%">
+      <span class="check" ${pressed(x.done)}>${x.done ? svg('check', 16, 3) : ''}</span><span class="grow"><span class="t">${esc(x.name)}</span>${shop === 'all' && stores.length > 1 ? `<span class="s">${esc(x.store)}</span>` : ''}</span><span class="s">${fmtQty(x)}</span></button>`).join('') : `<p class="empty">${items.length ? '¡Ya lo tenéis todo!' : 'Nada para este súper.'}</p>`}</div></div>
     ${done ? `<button class="btn block" data-a="finish" data-s="${esc(shop)}">Terminar compra (${done} cogido${done > 1 ? 's' : ''})</button>` : ''}
     <p class="small">Lo tachado sale de la lista al terminar y se guarda en el historial.</p>`;
   }
@@ -553,14 +557,19 @@ function compra() {
     sugg = pool.filter((n) => norm(n).includes(q)).slice(0, 5);
     if (!pool.some((n) => norm(n) === q)) sugg.push(ui.q.trim());
   }
-  const pend = list.filter((x) => !x.done);
+  const pend = list.filter((x) => !x.done && inShop(x));
+  const due = dueItems().filter((h) => !list.some((x) => !x.done && norm(x.name) === norm(h.name)));
   return `${bar('Compra')}${mode}
+  ${due.length ? `<div class="card"><span class="label">Puede que os falte</span>
+    <div class="chips">${due.slice(0, 8).map((h) => `<button class="chip" data-a="cadd" data-n="${esc(h.name)}">+ ${esc(h.name)} <span class="small">· cada ~${h.every} días</span></button>`).join('')}</div>
+    <p class="small">Lo calcula con cada cuánto lo compráis.</p></div>` : ''}
   <div class="card">
     <label class="sr" for="cq">Buscar o añadir producto</label>
     <input id="cq" type="search" data-i="q" value="${esc(ui.q)}" placeholder="Buscar o añadir producto" autocomplete="off">
     ${sugg.length ? `<div class="chips">${sugg.map((n) => `<button class="chip" data-a="cadd" data-n="${esc(n)}">+ ${esc(n)}</button>`).join('')}</div>` : ''}
   </div>
-  <div class="card"><span class="label">En la lista · ${pend.length}</span><div class="list">
+  ${shopSeg}
+  <div class="card"><span class="label">En la lista${shop === 'all' ? '' : ' de ' + esc(shop)} · ${pend.length}</span><div class="list">
   ${pend.length ? pend.map((x) => `<div class="item"><span class="grow"><span class="t">${esc(x.name)}</span>
       <button class="tag" data-a="cstore" data-id="${x.id}" style="border:none;margin-top:4px">${esc(x.store)} · cambiar</button></span>
       <span class="qty"><button data-a="cqty" data-id="${x.id}" data-n="-1" aria-label="Menos">−</button><button data-a="cunit" data-id="${x.id}" style="width:auto;padding:0 6px;background:none;font-size:14px" aria-label="Cambiar unidad"><span>${fmtQty(x)}</span></button><button data-a="cqty" data-id="${x.id}" data-n="1" aria-label="Más">+</button></span>
@@ -571,7 +580,20 @@ function compra() {
     <form class="inline-add" data-f="store"><input type="text" name="name" placeholder="Nuevo supermercado" aria-label="Nuevo supermercado" required><button class="btn sm">Añadir</button></form>
   </details>`;
 }
-const fmtQty = (x) => `${String(x.qty).replace('.', ',')} ${x.unit}`;
+// Cada cuánto compráis cada cosa (con al menos 3 compras) y si ya toca.
+function dueItems() {
+  const t = today();
+  return db.all('shoppingHistory').map((h) => {
+    const ds = [...new Set(h.dates || [])].sort();
+    if (ds.length < 3) return null;
+    const gaps = ds.slice(1).map((d, k) => diffDays(ds[k], d));
+    const every = Math.max(1, Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length));
+    const since = diffDays(ds[ds.length - 1], t);
+    return since >= Math.round(every * 0.9) ? { name: h.name, every, late: since / every } : null;
+  }).filter(Boolean).sort((a, b) => b.late - a.late);
+}
+const diffDays = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
+const fmtQty = (x) =>`${String(x.qty).replace('.', ',')} ${x.unit}`;
 
 /* ───────────── MENÚ ───────────── */
 const recipe = (id) => db.get('recipes', id);
@@ -601,6 +623,21 @@ const KINDS = { pescado: 'Pescado', huevo: 'Huevo', pollo: 'Pollo o pavo', carne
 const schoolLunch = (date) => (db.raw().schoolMenu || {})[date] || '';
 // Lo que ya han comido en el cole ese día: tipos de proteína que conviene no repetir en la cena.
 const lunchKinds = (date) => { const t = schoolLunch(date); return Object.keys(KIND_WORDS).filter((k) => KIND_WORDS[k].test(t)); };
+// Lo que soléis comprar (historial de la compra): cuántos ingredientes de un plato compráis a menudo.
+const boughtOften = () => db.all('shoppingHistory').filter((h) => (h.count || 1) >= 2).map((h) => norm(h.name));
+function buyMatches(r, often = boughtOften()) {
+  return (r.ingredients || []).filter((i) => { const n = norm(i.name); return often.some((h) => h && (n.includes(h) || h.includes(n))); }).map((i) => i.name);
+}
+// Elige al azar, pero dando más peso a los platos cuyos ingredientes soléis comprar.
+function weightedPick(pool) {
+  const often = boughtOften();
+  const w = pool.map((r) => 1 + buyMatches(r, often).length);
+  let x = Math.random() * w.reduce((a, b) => a + b, 0);
+  for (let k = 0; k < pool.length; k++) { x -= w[k]; if (x <= 0) return pool[k]; }
+  return pool[pool.length - 1];
+}
+// Enlace a la receta: el que hayáis puesto o, si no, una búsqueda de recetas bien valoradas.
+const recipeLink = (r) => r.url || `https://www.google.com/search?q=${encodeURIComponent('receta ' + r.name + ' valoraciones')}`;
 function pickRecipe(meal, date, used, usedKinds) {
   const all = safeRecipes();
   const avoid = meal === 'cena' ? lunchKinds(date) : [];
@@ -612,7 +649,7 @@ function pickRecipe(meal, date, used, usedKinds) {
     (r) => !used.includes(r.id),
     () => true
   ];
-  for (const ok of tiers) { const pool = all.filter(ok); if (pool.length) return pool[Math.floor(Math.random() * pool.length)]; }
+  for (const ok of tiers) { const pool = all.filter(ok); if (pool.length) return weightedPick(pool); }
   return null;
 }
 function proposeWeek(key) {
@@ -636,8 +673,8 @@ function dishesToShopping(dishes) {
 function menu() {
   const key = weekKey(ui.menuWeek);
   const week = db.raw().menu[key];
-  const recipes = db.all('recipes').slice().sort((a, b) => a.name.localeCompare(b.name));
-  const tabs = `<div class="seg" role="group" aria-label="Semana"><button data-a="mweek" data-n="0" ${pressed(ui.menuWeek === 0)}>Esta semana</button><button data-a="mweek" data-n="1" ${pressed(ui.menuWeek === 1)}>La que viene</button></div>`;
+  const recipes = safeRecipes().slice().sort((a, b) => a.name.localeCompare(b.name));
+  const tabs =`<div class="seg" role="group" aria-label="Semana"><button data-a="mweek" data-n="0" ${pressed(ui.menuWeek === 0)}>Esta semana</button><button data-a="mweek" data-n="1" ${pressed(ui.menuWeek === 1)}>La que viene</button></div>`;
   if (!week) {
     return `${bar('Menú')}${tabs}<div class="card"><p>Aún no hay menú para la semana del ${parse(key).getDate()} de ${MONL[parse(key).getMonth()]}.</p>
       <button class="btn block" data-a="propose" data-k="${key}">${svg('shuffle', 18)}Proponer menú de la semana</button>
@@ -652,6 +689,7 @@ function menu() {
       <div class="day-head"><h3>${esc(cap(DOWL[parse(day.date).getDay()]))} ${parse(day.date).getDate()} · ${day.meal}</h3><span class="small">${sv}</span></div>
       ${cole ? `<p class="small cole-lunch">🍽️ En el cole: ${esc(cole)}</p>` : ''}
       ${day.dishes.map((d) => `<div class="dish"><span class="grow">${esc(dishName(d))}</span>
+        ${recipe(d.recipe) ? `<a class="icon-btn" href="${esc(recipeLink(recipe(d.recipe)))}" target="_blank" rel="noopener" aria-label="Ver la receta" style="text-decoration:none">📖</a>` : ''}
         <button class="icon-btn" data-a="dish-other" data-k="${key}" data-di="${di}" data-id="${d.id}" aria-label="Otro plato">${svg('shuffle', 18)}</button>
         <button class="icon-btn" data-a="dish-shop" data-k="${key}" data-di="${di}" data-id="${d.id}" aria-label="Ingredientes a la compra">${svg('cart', 18)}</button>
         <button class="icon-btn" data-a="dish-del" data-k="${key}" data-di="${di}" data-id="${d.id}" aria-label="Quitar">${svg('x', 18)}</button></div>`).join('')}
@@ -660,7 +698,18 @@ function menu() {
     </section>`;
   }).join('')}
   <button class="btn block" data-a="week-shop" data-k="${key}">${svg('cart', 18)}Pasar toda la semana a la compra</button>
-  <div class="two"><button class="btn soft" data-a="propose" data-k="${key}">${svg('shuffle', 18)}Proponer otra</button><a class="btn soft" href="#recetario">Recetario</a></div>`;
+  <div class="two"><button class="btn soft" data-a="propose" data-k="${key}">${svg('shuffle', 18)}Proponer otra</button><a class="btn soft" href="#recetario">Recetario</a></div>
+  ${ideasCard()}`;
+}
+// Platos del recetario que se hacen con lo que soléis comprar (aprende del historial de la compra).
+function ideasCard() {
+  const often = boughtOften();
+  if (often.length < 5) return `<p class="small">Cuando llevéis unas cuantas compras terminadas en «En el súper», aquí saldrán ideas de platos con lo que soléis comprar.</p>`;
+  const top = safeRecipes().map((r) => ({ r, m: buyMatches(r, often) })).filter((x) => x.m.length >= 2)
+    .sort((a, b) => b.m.length / b.r.ingredients.length - a.m.length / a.r.ingredients.length).slice(0, 4);
+  if (!top.length) return '';
+  return `<div class="card"><span class="label">Ideas con lo que soléis comprar</span><div class="list">${top.map(({ r, m }) => `<a class="item" href="${esc(recipeLink(r))}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
+    <span class="grow"><span class="t">${esc(r.name)}</span><span class="s">Ya compráis: ${esc(m.join(', '))}</span></span>📖</a>`).join('')}</div></div>`;
 }
 
 function recetario() {
@@ -673,6 +722,7 @@ function recetario() {
       <div class="two"><label class="field"><span>Proteína</span><select name="kind">${Object.entries(KINDS).map(([k, l]) => `<option value="${k}" ${(r?.kind || 'otro') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field"><span>Para</span><select name="when">${[['cena', 'Cena'], ['comida', 'Comida'], ['ambas', 'Las dos']].map(([k, l]) => `<option value="${k}" ${(r?.when || 'ambas') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
       <label class="field"><span>Ingredientes para 4 (uno por línea, ej.: «500 g pasta»)</span><textarea name="ing">${esc((r?.ingredients || []).map((i) => `${String(i.qty).replace('.', ',')} ${i.unit} ${i.name}`).join('\n'))}</textarea></label>
+      <label class="field"><span>Enlace a la receta (opcional; si no, se busca una bien valorada)</span><input type="url" name="url" value="${esc(r?.url)}" placeholder="https://…"></label>
       <div class="two"><button type="button" class="btn soft" data-a="recipe-cancel">Cancelar</button><button class="btn">Guardar</button></div>
       ${r ? `<button type="button" class="btn danger block" data-a="del" data-col="recipes" data-id="${r.id}">Borrar plato</button>` : ''}</form>` : '';
   return `${bar('Recetario', '#menu')}
@@ -926,13 +976,17 @@ const A = {
   'ficha-cancel': () => { ui.editFicha = null; render(); },
   cmode: (el) => { ui.compraMode = el.dataset.m; render(); },
   shop: (el) => { ui.shop = el.dataset.s; render(); },
+  showgot: (el) => { ui.showGot = el.dataset.v === '1'; render(); },
   buy: (el) => { const x = db.get('shopping', el.dataset.id); db.update('shopping', x.id, { done: !x.done }); },
   finish: (el) => {
-    const s = el.dataset.s; const got = db.all('shopping').filter((x) => x.store === s && x.done);
+    const s = el.dataset.s; const inS = (x) => s === 'all' || x.store === s;
+    const got = db.all('shopping').filter((x) => inS(x) && x.done);
     const hist = db.all('shoppingHistory').filter((h) => !got.some((g) => norm(g.name) === norm(h.name)));
     const t = today();
-    db.set('shoppingHistory', [...got.map((g) => ({ name: g.name, store: g.store, unit: g.unit, last: t, count: (db.all('shoppingHistory').find((h) => norm(h.name) === norm(g.name))?.count || 0) + 1 })), ...hist].slice(0, 300));
-    db.set('shopping', db.all('shopping').filter((x) => !(x.store === s && x.done)));
+    const prevOf = (g) => db.all('shoppingHistory').find((h) => norm(h.name) === norm(g.name));
+    db.set('shoppingHistory', [...got.map((g) => { const p = prevOf(g); const dates = [...new Set([...(p?.dates || (p?.last ? [p.last] : [])), t])].sort().slice(-12);
+      return { name: g.name, store: g.store, unit: g.unit, last: t, count: (p?.count || 0) + 1, dates }; }), ...hist].slice(0, 300));
+    db.set('shopping', db.all('shopping').filter((x) => !(inS(x) && x.done)));
     toast(`Compra terminada: ${got.length} producto${got.length > 1 ? 's' : ''}`);
   },
   cadd: (el) => { const n = el.dataset.n; const isNew = addShopping(cap(n)); ui.q = ''; render(); toast(isNew ? `${cap(n)} añadido` : `${cap(n)}: una más`); const i = document.getElementById('cq'); if (i) i.focus(); },
@@ -995,7 +1049,7 @@ const F = {
   gift: (fd, f) => { db.add('gifts', { who: f.dataset.who || fd.get('who'), text: fd.get('text').trim(), occasion: fd.get('occasion'), done: false }); if (f.dataset.go) { ui.who = f.dataset.who || fd.get('who'); location.hash = '#'; } else render(); toast('Idea guardada'); },
   ficha: (fd, f) => { const ps = db.clone(people()); const p = ps.find((x) => x.id === f.dataset.id); p.cumple = fd.get('cumple'); p.talla = fd.get('talla').trim(); p.pie = fd.get('pie').trim(); ui.editFicha = null; db.set('people', ps); toast('Datos guardados'); },
   store: (fd) => { const n = fd.get('name').trim(); if (n && !db.all('stores').includes(n)) db.set('stores', [...db.all('stores'), n]); },
-  recipe: (fd, f) => { const o = { name: fd.get('name').trim(), kind: fd.get('kind'), when: fd.get('when'), ingredients: parseIngredients(fd.get('ing') || '') }; if (f.dataset.id) db.update('recipes', f.dataset.id, o); else db.add('recipes', o); ui.editRecipe = null; render(); toast('Plato guardado'); },
+  recipe: (fd, f) => { const o = { name: fd.get('name').trim(), kind: fd.get('kind'), when: fd.get('when'), ingredients: parseIngredients(fd.get('ing') || ''), url: (fd.get('url') || '').trim() }; if (f.dataset.id) db.update('recipes', f.dataset.id, o); else db.add('recipes', o); ui.editRecipe = null; render(); toast('Plato guardado'); },
   turno: (fd, f) => {
     const o = { date: fd.get('date'), kind: fd.get('kind'), start: fd.get('start'), end: fd.get('end'), place: fd.get('place').trim(), away: fd.get('away').trim() };
     if (f.dataset.id) db.update('shifts', f.dataset.id, o); else db.add('shifts', o);
