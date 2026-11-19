@@ -1,6 +1,6 @@
 // Permite abrir la app sin conexión. Primero intenta la red (para tener siempre la última versión)
 // y, si no hay, usa la copia guardada.
-const CACHE = 'casa-v2';
+const CACHE = 'casa-v3';
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'store.js', 'seed.js', 'config.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', (e) => {

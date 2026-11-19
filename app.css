@@ -169,3 +169,4 @@ details summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var
 /* Entrar */
 .login-wrap { min-height: 80vh; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 14px; max-width: 420px; margin: 0 auto; }
 .login-wrap .card { width: 100%; }
+.cole-lunch { margin: 0 0 6px; color: var(--ink-2, inherit); }

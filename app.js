@@ -111,8 +111,18 @@ const WORK = new Set(['vuelo', 'curso', 'oficina']);
 const shiftTitle = (sh) => (sh.kind === 'vuelo' ? `Silvia vuela${sh.place ? ' · ' + sh.place : ''}` : sh.kind === 'curso' ? 'Silvia: curso' : sh.kind === 'oficina' ? `Silvia: oficina${sh.place ? ' en ' + sh.place : ' (online)'}` : sh.kind === 'libre' ? 'Silvia libre' : 'Silvia: reducción');
 const shiftSub = (sh) => (sh.kind === 'vuelo' ? `Firma ${sh.start} · vuelve ${sh.end}` : sh.start ? `${sh.start}–${sh.end}` : '');
 
+// Días con cole: de lunes a viernes, dentro del curso y sin vacaciones ni festivos (kv «schoolCal»).
+function isLectivo(d) {
+  if (isoDow(d) > 5) return false;
+  const c = db.raw().schoolCal;
+  if (!c) return true;
+  if (c.start && d < c.start) return false;
+  if (c.end && d > c.end) return false;
+  return !(c.off || []).includes(d);
+}
 function occursOn(ev, d) {
   if (d < ev.date) return false;
+  if (ev.schoolOnly && !isLectivo(d)) return false;
   if (ev.until && d > ev.until) return false;
   const rep = ev.repeat || 'no';
   if (rep === 'no') return d === ev.date;
@@ -562,12 +572,41 @@ function randomRecipe(exclude) {
   const src = pool.length ? pool : all;
   return src.length ? src[Math.floor(Math.random() * src.length)].id : null;
 }
+const KIND_WORDS = {
+  pescado: /merluza|pescad|salm[oó]n|bacalao|at[uú]n|lubina|dorada|lenguado|gallo|sepia|calamar|gamba|marisco|rape|abadejo|panga/i,
+  huevo: /huevo|tortilla|revuelto/i,
+  pollo: /pollo|pavo/i,
+  carne: /ternera|cerdo|lomo|carne|filete|alb[oó]ndiga|hamburguesa|cordero|salchicha|jam[oó]n|chorizo|lacón/i,
+  legumbre: /lenteja|garbanzo|alubia|jud[ií]as? blanca|cocido|potaje|fabada|hummus/i,
+  arroz: /arroz|paella|risotto/i,
+  pasta: /pasta|macarr|espagueti|fideo|lasa[ñn]a|tallar/i
+};
+const KINDS = { pescado: 'Pescado', huevo: 'Huevo', pollo: 'Pollo o pavo', carne: 'Carne', legumbre: 'Legumbre', arroz: 'Arroz', pasta: 'Pasta', otro: 'Otro' };
+const schoolLunch = (date) => (db.raw().schoolMenu || {})[date] || '';
+// Lo que ya han comido en el cole ese día: tipos de proteína que conviene no repetir en la cena.
+const lunchKinds = (date) => { const t = schoolLunch(date); return Object.keys(KIND_WORDS).filter((k) => KIND_WORDS[k].test(t)); };
+function pickRecipe(meal, date, used, usedKinds) {
+  const all = db.all('recipes');
+  const avoid = meal === 'cena' ? lunchKinds(date) : [];
+  const fits = (r) => (r.when || 'ambas') === 'ambas' || r.when === meal;
+  const tiers = [
+    (r) => fits(r) && !used.includes(r.id) && !avoid.includes(r.kind) && !usedKinds.includes(r.kind),
+    (r) => fits(r) && !used.includes(r.id) && !avoid.includes(r.kind),
+    (r) => !used.includes(r.id) && !avoid.includes(r.kind),
+    (r) => !used.includes(r.id),
+    () => true
+  ];
+  for (const ok of tiers) { const pool = all.filter(ok); if (pool.length) return pool[Math.floor(Math.random() * pool.length)]; }
+  return null;
+}
 function proposeWeek(key) {
-  const used = [];
+  const used = [], usedKinds = [];
   const week = Array.from({ length: 7 }, (_, k) => {
     const date = addDays(key, k);
-    const rid = randomRecipe(used); if (rid) used.push(rid);
-    return { date, meal: k < 5 ? 'cena' : 'comida', dishes: rid ? [{ id: uid(), recipe: rid }] : [] };
+    const meal = k < 5 ? 'cena' : 'comida';
+    const r = pickRecipe(meal, date, used, usedKinds);
+    if (r) { used.push(r.id); if (r.kind) usedKinds.push(r.kind); }
+    return { date, meal, dishes: r ? [{ id: uid(), recipe: r.id }] : [] };
   });
   const m = { ...db.raw().menu, [key]: week };
   db.set('menu', m);
@@ -586,14 +625,16 @@ function menu() {
   if (!week) {
     return `${bar('Menú')}${tabs}<div class="card"><p>Aún no hay menú para la semana del ${parse(key).getDate()} de ${MONL[parse(key).getMonth()]}.</p>
       <button class="btn block" data-a="propose" data-k="${key}">${svg('shuffle', 18)}Proponer menú de la semana</button>
-      <p class="small">Se hace con vuestro recetario (${recipes.length} platos). Cenas de lunes a viernes y comidas el fin de semana.</p></div>
+      <p class="small">Se hace con vuestro recetario (${recipes.length} platos). Cenas ligeras de lunes a viernes y comidas el fin de semana, variando la proteína y sin repetir lo que comen ese día en el cole.</p></div>
       <a class="btn soft block" href="#recetario">Ver y cambiar el recetario</a>`;
   }
   return `${bar('Menú')}${tabs}
   ${week.map((day, di) => {
     const sv = silviaOut(day.date) ? 'Silvia trabaja' : '';
+    const cole = day.meal === 'cena' && isLectivo(day.date) ? schoolLunch(day.date) : '';
     return `<section class="day ${day.date === today() ? 'today' : ''}">
       <div class="day-head"><h3>${esc(cap(DOWL[parse(day.date).getDay()]))} ${parse(day.date).getDate()} · ${day.meal}</h3><span class="small">${sv}</span></div>
+      ${cole ? `<p class="small cole-lunch">🍽️ En el cole: ${esc(cole)}</p>` : ''}
       ${day.dishes.map((d) => `<div class="dish"><span class="grow">${esc(dishName(d))}</span>
         <button class="icon-btn" data-a="dish-other" data-k="${key}" data-di="${di}" data-id="${d.id}" aria-label="Otro plato">${svg('shuffle', 18)}</button>
         <button class="icon-btn" data-a="dish-shop" data-k="${key}" data-di="${di}" data-id="${d.id}" aria-label="Ingredientes a la compra">${svg('cart', 18)}</button>
@@ -613,6 +654,8 @@ function recetario() {
   const form = ed ? `<form class="card" data-f="recipe" data-id="${r ? r.id : ''}">
       <span class="label">${r ? 'Editar plato' : 'Nuevo plato'}</span>
       <label class="field"><span>Nombre</span><input type="text" name="name" value="${esc(r?.name)}" required></label>
+      <div class="two"><label class="field"><span>Proteína</span><select name="kind">${Object.entries(KINDS).map(([k, l]) => `<option value="${k}" ${(r?.kind || 'otro') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="field"><span>Para</span><select name="when">${[['cena', 'Cena'], ['comida', 'Comida'], ['ambas', 'Las dos']].map(([k, l]) => `<option value="${k}" ${(r?.when || 'ambas') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
       <label class="field"><span>Ingredientes para 4 (uno por línea, ej.: «500 g pasta»)</span><textarea name="ing">${esc((r?.ingredients || []).map((i) => `${String(i.qty).replace('.', ',')} ${i.unit} ${i.name}`).join('\n'))}</textarea></label>
       <div class="two"><button type="button" class="btn soft" data-a="recipe-cancel">Cancelar</button><button class="btn">Guardar</button></div>
       ${r ? `<button type="button" class="btn danger block" data-a="del" data-col="recipes" data-id="${r.id}">Borrar plato</button>` : ''}</form>` : '';
@@ -620,7 +663,7 @@ function recetario() {
   <p class="small">Vuestros platos de siempre. El menú de la semana se propone a partir de aquí y sus ingredientes van a la compra.</p>
   ${form || `<button class="btn block" data-a="recipe-edit" data-id="new">${svg('plus', 18)}Nuevo plato</button>`}
   <div class="card"><div class="list">${recipes.map((x) => `<button class="item" data-a="recipe-edit" data-id="${x.id}" style="border-left:none;border-right:none;border-bottom:none;background:none;text-align:left;width:100%">
-    <span class="grow"><span class="t">${esc(x.name)}</span><span class="s">${esc(x.ingredients.map((i) => i.name).join(', '))}</span></span>${svg('edit', 18)}</button>`).join('')}</div></div>`;
+    <span class="grow"><span class="t">${esc(x.name)}</span><span class="s">${x.kind ? esc(KINDS[x.kind] || '') + ' · ' : ''}${esc(x.ingredients.map((i) => i.name).join(', '))}</span></span>${svg('edit', 18)}</button>`).join('')}</div></div>`;
 }
 function parseIngredients(text) {
   return text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
@@ -806,6 +849,7 @@ function anadir(type, id) {
       <label class="field"><span>¿Se repite?</span><select name="repeat">${[['no', 'No'], ['semanal', 'Cada semana'], ['mensual', 'Cada mes'], ['anual', 'Cada año']].map(([k, l]) => `<option value="${k}" ${v.repeat === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <div class="field"><span>Días (si es semanal)</span><div class="chips">${'LMXJVSD'.split('').map((l, k) => `<label class="chip"><input type="checkbox" name="days" value="${k + 1}" ${(v.days || []).includes(k + 1) ? 'checked' : ''}> ${l}</label>`).join('')}</div></div>
       <label class="field"><span>Hasta el (si se repite)</span><input type="date" name="until" value="${esc(v.until)}"></label>
+      <label class="chip"><input type="checkbox" name="schoolOnly" value="1" ${v.schoolOnly ? 'checked' : ''}> Solo días de cole (no en vacaciones ni festivos)</label>
       <p class="small">Si Mario apunta algo por la tarde y Silvia trabaja, la app avisa de que nadie recoge a los niños.</p>
       <button class="btn block">Guardar</button>
       ${ev ? `<button type="button" class="btn danger block" data-a="del" data-col="events" data-id="${ev.id}" data-back="#agenda">Borrar</button>` : ''}</form>`;
@@ -878,7 +922,7 @@ const A = {
   'dish-other': (el) => {
     const k = el.dataset.k; const week = db.clone(db.raw().menu[k]); const day = week[+el.dataset.di];
     const used = week.flatMap((d) => d.dishes.map((x) => x.recipe)).filter(Boolean);
-    const d = day.dishes.find((x) => x.id === el.dataset.id); d.recipe = randomRecipe(used); delete d.text; saveWeek(k, week);
+    const d = day.dishes.find((x) => x.id === el.dataset.id); const usedKinds = week.flatMap((x) => x.dishes.map((y) => recipe(y.recipe)?.kind)).filter(Boolean); d.recipe = pickRecipe(day.meal, day.date, used, usedKinds)?.id || randomRecipe(used); delete d.text; saveWeek(k, week);
   },
   'dish-del': (el) => { const k = el.dataset.k; const week = db.clone(db.raw().menu[k]); const day = week[+el.dataset.di]; day.dishes = day.dishes.filter((x) => x.id !== el.dataset.id); saveWeek(k, week); },
   'dish-shop': (el) => { const week = db.raw().menu[el.dataset.k]; const d = week[+el.dataset.di].dishes.find((x) => x.id === el.dataset.id); const n = dishesToShopping([d]); toast(n ? `${dishName(d)}: ingredientes a la compra` : 'Ese plato no tiene ingredientes apuntados'); },
@@ -916,7 +960,7 @@ const F = {
     L.busy = false; render();
   },
   event: (fd, f) => {
-    const who = fd.getAll('who'); const o = { title: fd.get('title').trim(), who: who.length ? who : ['f'], date: fd.get('date'), time: fd.get('time'), endTime: fd.get('endTime'), place: fd.get('place').trim(), repeat: fd.get('repeat'), days: fd.getAll('days').map(Number), until: fd.get('until') };
+    const who = fd.getAll('who'); const o = { title: fd.get('title').trim(), who: who.length ? who : ['f'], date: fd.get('date'), time: fd.get('time'), endTime: fd.get('endTime'), place: fd.get('place').trim(), repeat: fd.get('repeat'), days: fd.getAll('days').map(Number), until: fd.get('until'), schoolOnly: fd.get('schoolOnly') === '1' };
     if (f.dataset.id) db.update('events', f.dataset.id, o); else db.add('events', o);
     location.hash = '#agenda'; toast('Guardado en la agenda');
   },
@@ -928,7 +972,7 @@ const F = {
   gift: (fd, f) => { db.add('gifts', { who: f.dataset.who || fd.get('who'), text: fd.get('text').trim(), occasion: fd.get('occasion'), done: false }); if (f.dataset.go) { ui.who = f.dataset.who || fd.get('who'); location.hash = '#'; } else render(); toast('Idea guardada'); },
   ficha: (fd, f) => { const ps = db.clone(people()); const p = ps.find((x) => x.id === f.dataset.id); p.cumple = fd.get('cumple'); p.talla = fd.get('talla').trim(); p.pie = fd.get('pie').trim(); ui.editFicha = null; db.set('people', ps); toast('Datos guardados'); },
   store: (fd) => { const n = fd.get('name').trim(); if (n && !db.all('stores').includes(n)) db.set('stores', [...db.all('stores'), n]); },
-  recipe: (fd, f) => { const o = { name: fd.get('name').trim(), ingredients: parseIngredients(fd.get('ing') || '') }; if (f.dataset.id) db.update('recipes', f.dataset.id, o); else db.add('recipes', o); ui.editRecipe = null; render(); toast('Plato guardado'); },
+  recipe: (fd, f) => { const o = { name: fd.get('name').trim(), kind: fd.get('kind'), when: fd.get('when'), ingredients: parseIngredients(fd.get('ing') || '') }; if (f.dataset.id) db.update('recipes', f.dataset.id, o); else db.add('recipes', o); ui.editRecipe = null; render(); toast('Plato guardado'); },
   turno: (fd, f) => {
     const o = { date: fd.get('date'), kind: fd.get('kind'), start: fd.get('start'), end: fd.get('end'), place: fd.get('place').trim(), away: fd.get('away').trim() };
     if (f.dataset.id) db.update('shifts', f.dataset.id, o); else db.add('shifts', o);
