@@ -695,9 +695,16 @@ function cole() {
     <button class="check" data-a="school" data-id="${x.id}" ${pressed(x.done)} aria-label="Hecho">${x.done ? svg('check', 16, 3) : ''}</button>
     <span class="grow"><span class="t">${esc(x.title)}</span><span class="s"><span class="tag" style="background:${p.tone};color:${p.ink}">${esc(TYPE_COLE[x.type] || 'Otro')}</span> ${x.date ? esc(relDay(x.date)) : ''}${x.source === 'educamos' ? ' · Educamos' : ''}</span></span>
     ${whoDot(x.kid)}<button class="icon-btn" data-a="del" data-col="school" data-id="${x.id}" aria-label="Borrar">${svg('x', 18)}</button></div>`; };
+  // Menú del comedor de esta semana (o de la siguiente si ya es fin de semana).
+  const wk = isoDow(today()) > 5 ? addDays(mondayOf(today()), 7) : mondayOf(today());
+  const lunchDays = [0, 1, 2, 3, 4].map((n) => addDays(wk, n));
+  const comedor = `<div class="card"><span class="label">Comedor del cole · semana del ${parse(wk).getDate()} de ${MONL[parse(wk).getMonth()]}</span><div class="list">${lunchDays.some((d) => schoolLunch(d))
+    ? lunchDays.map((d) => `<div class="item ${d === today() ? 'today' : ''}"><span class="grow"><span class="t">${esc(cap(DOWL[parse(d).getDay()]))} ${parse(d).getDate()}</span><span class="s">${!isLectivo(d) ? 'Sin cole' : esc(schoolLunch(d) || 'Sin datos')}</span></span></div>`).join('')
+    : '<p class="empty">Aún no hay menú del comedor. Se carga solo desde Educamos y el menú de casa lo tiene en cuenta para no repetir.</p>'}</div></div>`;
   return `${bar('Cole')}${status}
   <div class="seg" role="group" aria-label="Niño"><button data-a="kid" data-k="todos" ${pressed(k === 'todos')}>Los dos</button>${kidList.map((p) => `<button data-a="kid" data-k="${p.id}" ${pressed(k === p.id)}>${esc(p.name)}</button>`).join('')}</div>
   <div class="card"><span class="label">Pendiente · ${pend.length}</span><div class="list">${pend.length ? pend.map(row).join('') : '<p class="empty">Nada pendiente.</p>'}</div></div>
+  ${comedor}
   <form class="card" data-f="school">
     <span class="label">Apuntar algo del cole</span>
     <input type="text" name="title" placeholder="Ej.: autorización de la excursión" aria-label="Qué pide el cole" required>
