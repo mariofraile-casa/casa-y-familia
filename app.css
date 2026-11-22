@@ -355,3 +355,5 @@ body.kiosk button { border: none; background: none; cursor: pointer; text-align:
 .vtop .grow b { display: block; font-size: 15px; }
 .vtop .grow small { display: block; font-size: 12px; color: var(--muted); }
 .vbot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-left: 36px; }
+/* En la app instalada, la barra de estado del iPad (hora y batería) va encima de la página: dejar hueco */
+@media (display-mode: standalone) { body.kiosk #app { padding-top: max(22px, env(safe-area-inset-top, 0px)); } body.kiosk .k-wrap, body.kiosk .k-night { height: calc(100vh - max(22px, env(safe-area-inset-top, 0px))); } }
