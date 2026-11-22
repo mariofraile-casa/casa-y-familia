@@ -357,3 +357,22 @@ body.kiosk button { border: none; background: none; cursor: pointer; text-align:
 .vbot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-left: 36px; }
 /* En la app instalada, la barra de estado del iPad (hora y batería) va encima de la página: dejar hueco */
 @media (display-mode: standalone) { body.kiosk #app { padding-top: max(22px, env(safe-area-inset-top, 0px)); } body.kiosk .k-wrap, body.kiosk .k-night { height: calc(100vh - max(22px, env(safe-area-inset-top, 0px))); } }
+
+/* Validar estrellas en el móvil (22/11) */
+.vbot { flex-wrap: wrap; justify-content: flex-start; }
+.vbot .vstars { color: #E8A317; font-size: 18px; letter-spacing: 1px; }
+.vbot .vstars i { color: #E2DACD; font-style: normal; }
+.vbot .vnum { flex: 1; font-size: 12px; color: var(--muted); min-width: 90px; }
+.vrow.editing { background: var(--soft); border-radius: 14px; padding: 10px; }
+
+/* Candado de la cocina (22/11) */
+.k-top .k-lock { margin-left: auto; border: none; background: rgba(255,255,255,.7); border-radius: 50%; width: 54px; height: 54px; font-size: 26px; }
+.k-top .k-lock.open { background: #FFE7A8; }
+.k-top .k-lock + .hora { margin-left: 0; }
+.k-pin .pin-dots { display: flex; gap: 14px; justify-content: center; margin: 6px 0; }
+.k-pin .pin-dots i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #2A2622; }
+.k-pin .pin-dots i.on { background: #2A2622; }
+.k-pin .err { color: #B3261E; font-weight: 700; }
+.k-pin .pin-pad { display: grid; grid-template-columns: repeat(3, 76px); gap: 12px; justify-content: center; }
+.k-pin .pin-pad button { height: 64px; border-radius: 18px; border: none; background: #F3EDE4; font-size: 26px; font-weight: 700; color: #2A2622; }
+.k-pin .pin-pad button[data-a="kpin-close"] { font-size: 16px; font-weight: 600; }

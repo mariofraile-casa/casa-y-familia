@@ -71,7 +71,8 @@ export function seed() {
     menu: {}, // { '2026-11-16': [{ date, meal, dishes: [recipeId|texto] }] } por semana (lunes)
     // Tareas de los niños: { c: [{ id, t, e, m: manana|tarde|noche, days: [1..7], school, mochila, checks: [{ t, days }] }], a: [...] }
     kidTasks: {},
-    kidGoal: { goal: 150, prize: '' },
+    kidGoal: { goal: 250, prize: '' },
+    kitchenPin: { code: '' },
     school: [],
     educamos: { status: 'sin-conectar', lastRead: null, message: '' },
     meds: [],

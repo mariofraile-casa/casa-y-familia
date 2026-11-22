@@ -1107,19 +1107,34 @@ const pendingValid = () => db.all('kidlog').filter((l) => !l.validatedBy && l.da
 function estrellas() {
   const p = pendingValid();
   const mon = mondayOf(today());
-  const g = db.raw().kidGoal || { goal: 150, prize: '' };
-  const row = (l) => { const k = person(l.kid); return `<div class="vrow">
+  const g = db.raw().kidGoal || { goal: 250, prize: '' };
+  const ve = ui.vedit;
+  const done = db.all('kidlog').filter((l) => l.validatedBy && l.date >= mon).sort((a, b) => b.date.localeCompare(a.date) || (b.validatedAt || 0) - (a.validatedAt || 0));
+  const row = (l) => { const k = person(l.kid); const editing = ve && ve.id === l.id;
+    const info = l.validatedBy
+      ? (l.changed && l.orig && l.orig !== l.stars ? `Se puso ${l.orig} · ${esc(person(l.validatedBy).name)} lo cambió a ${l.stars}` : `Validado por ${esc(person(l.validatedBy).name)}`)
+      : `Se puso ${l.stars} de 5`;
+    const bot = editing
+      ? `<span class="stars-pick">${[1, 2, 3, 4, 5].map((n) => `<button data-a="vstar" data-n="${n}" aria-label="${n} estrellas" class="${n <= ve.stars ? 'on' : ''}">★</button>`).join('')}</span>
+        <span class="vnum">${ve.stars} de 5</span><button class="btn sm soft" data-a="vedit-cancel">Cancelar</button><button class="btn sm" data-a="vedit-save">Guardar</button>`
+      : `<span class="vstars">${starsTxt(l.stars)}</span><span class="vnum">${info}</span>
+        <button class="btn sm soft" data-a="vedit" data-id="${l.id}">✏️ Cambiar</button>${l.validatedBy ? '' : `<button class="btn sm" data-a="valid" data-id="${l.id}">✓ Validar</button>`}`;
+    return `<div class="vrow ${editing ? 'editing' : ''}">
     <div class="vtop"><span class="who" style="background:${k.tone};color:${k.ink}">${esc(k.name[0])}</span>
     <span class="grow"><b>${esc(l.title)}</b><small>${esc(k.name)} · ${esc(relDay(l.date))}</small></span></div>
-    <div class="vbot">    <span class="stars-pick">${[1, 2, 3, 4, 5].map((n) => `<button data-a="vstar" data-id="${l.id}" data-n="${n}" aria-label="${n} estrellas" class="${n <= l.stars ? 'on' : ''}">★</button>`).join('')}</span>
-    <button class="btn sm" data-a="valid" data-id="${l.id}">✓ Validar</button></div></div>`; };
+    <div class="vbot">${bot}</div></div>`; };
+  const pin = (db.raw().kitchenPin || {}).code;
   return `${bar('Estrellas de los niños')}
   <div class="card"><span class="label">Esta semana</span>
     ${kids().map((k) => { const s = kidStars(k.id, mon, addDays(mon, 6)); return `<div class="row"><span>${esc(k.name)}</span><span class="end">${s} ⭐ de ${g.goal}</span></div>`; }).join('')}
     ${g.prize ? `<p class="small">🎁 Premio: ${esc(g.prize)}</p>` : ''}</div>
   <div class="card"><div class="card-head"><span class="label">Para validar · ${p.length}</span>${p.length > 1 ? '<button class="btn sm" data-a="valid-all">✓ Validar todas</button>' : ''}</div>
-    <p class="small">Se las ponen ellos en la cocina y ya cuentan. Validad con un toque o tocad otra estrella para corregirla.</p>
+    <p class="small">Se las ponen ellos en la cocina y ya cuentan. «Validar» si está bien; «Cambiar» para poner otras.</p>
     <div class="list">${p.length ? p.map(row).join('') : '<p class="empty">Nada pendiente. ¡Todo validado!</p>'}</div></div>
+  ${done.length ? `<details class="card" ${ve && done.some((l) => l.id === ve.id) ? 'open' : ''}><summary>Ya validadas esta semana · ${done.length}</summary><div class="list">${done.map(row).join('')}</div></details>` : ''}
+  <details class="card"><summary>Candado de la cocina ${pin ? '· puesto' : '· sin código'}</summary>
+    <p class="small">En el iPad los niños solo ven y se ponen estrellas. Para cambiar el menú, la compra o el calendario allí, tocad 🔒 y escribid este código (se cierra solo a los 5 minutos).</p>
+    <form class="inline-add" data-f="kpin-set" style="gap:8px;margin-top:8px"><input type="text" name="code" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required placeholder="4 números" aria-label="Código de 4 números" style="max-width:130px"><button class="btn sm">${pin ? 'Cambiar código' : 'Poner código'}</button></form></details>
   <details class="card"><summary>Meta y premio de la semana</summary>
     <form class="inline-add" data-f="kidgoal" style="flex-wrap:wrap;gap:8px;margin-top:8px"><input type="number" name="goal" min="10" step="5" value="${g.goal}" aria-label="Estrellas de la meta" style="max-width:90px">
     <input type="text" name="prize" value="${esc(g.prize)}" placeholder="Premio" aria-label="Premio"><button class="btn sm">Guardar</button></form></details>`;
@@ -1128,6 +1143,10 @@ function estrellas() {
 /* ───────────── COCINA (iPad en la pared) ───────────── */
 const K = () => (ui.k = ui.k || { v: 'hoy', date: null, week: 0, month: 0, rate: null, wake: 0, editDay: null });
 const isKiosk = () => auth.me().person === 'k' || parts()[0] === 'cocina';
+const kOpen = () => Date.now() < (K().unlock || 0);
+const kLock = () => isKiosk() && !kOpen();
+// En el iPad, sin el candado abierto los niños solo ven y se ponen estrellas.
+const K_LOCKED = new Set(['kadd', 'kdish-edit', 'kdish-new', 'kdish-pick', 'propose', 'week-shop', 'buy', 'finish', 'cadd', 'kundo', 'kevent', 'kdish']);
 const kNight = () => { const h = new Date().getHours(); return (h >= 22 || h < 7) && Date.now() > (K().wake || 0); };
 const kDot = (p, size = 30) => `<span class="dot" style="background:${p.tone};color:${p.ink};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px">${esc(p.name[0])}</span>`;
 const kDots = (ids) => `<span class="dots">${ids.map((id) => kDot(person(id))).join('')}</span>`;
@@ -1161,7 +1180,7 @@ function kMealCard(d, title) {
   return `<div class="card k-cena"><div class="label">${esc(title || (m.meal === 'comida' ? 'Comida' : 'Cena'))} <button class="mas" data-a="kgo" data-v="menu">Ver menú ›</button></div>
     <h2>${m.name ? esc(m.name) : '<span class="muted">Sin plato todavía</span>'}</h2>
     ${cole ? `<p class="small">🏫 En el cole: ${esc(cole)}</p>` : ''}
-    <div class="acciones"><button class="btn" data-a="kdish-new" data-d="${d}">🔄 Cambiar plato</button>${m.r ? `<a class="btn" href="${esc(recipeLink(m.r))}" target="_blank" rel="noopener">📖 Receta</a>` : ''}</div></div>`;
+    <div class="acciones">${kLock() ? '' : `<button class="btn" data-a="kdish-new" data-d="${d}">🔄 Cambiar plato</button>`}${m.r ? `<a class="btn" href="${esc(recipeLink(m.r))}" target="_blank" rel="noopener">📖 Receta</a>` : ''}</div></div>`;
 }
 function kMochila(d) {
   return kids().map((k) => { const t = kidTasksFor(k.id, d).find((x) => x.checks.length); return t ? `<p class="k-moch"><b>${esc(k.name)}:</b> ${esc(t.checks.join(' · '))}</p>` : ''; }).join('');
@@ -1183,7 +1202,7 @@ function kDia() {
   const its = itemsOn(d);
   const add = k.editDay === d ? `<form class="k-add" data-f="kevent" data-d="${d}"><input name="title" placeholder="¿Qué hay?" required aria-label="Qué hay"><input type="time" name="time" aria-label="Hora">
     <select name="who" aria-label="Para quién">${[...people(), FAM].map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select><button class="btn dark">Guardar</button></form>`
-    : `<button class="btn dark" data-a="kadd" data-d="${d}">＋ Añadir algo a este día</button>`;
+    : kLock() ? '' : `<button class="btn dark" data-a="kadd" data-d="${d}">＋ Añadir algo a este día</button>`;
   return `<div class="k-cab"><h2>${esc(kWeekday(d))}, ${parse(d).getDate()} de ${esc(MONL[parse(d).getMonth()])}</h2>
     <span class="k-nav"><button class="volver" data-a="kday" data-d="${addDays(d, -1)}">‹ ${esc(DOW[parse(addDays(d, -1)).getDay()])}</button><button class="volver" data-a="kday" data-d="${addDays(d, 1)}">${esc(DOW[parse(addDays(d, 1)).getDay()])} ›</button><button class="volver" data-a="kgo" data-v="${esc(k.from || 'hoy')}">Cerrar</button></span></div>
   ${kBanners(d)}
@@ -1228,15 +1247,17 @@ function kMenu() {
       <div class="label" style="margin-top:4px">O elige del recetario</div>
       <div class="chips k-recetas">${safeRecipes().filter((r) => (r.when || 'ambas') === 'ambas' || r.when === (isoDow(ed) >= 6 ? 'comida' : 'cena')).sort(() => Math.random() - 0.5).slice(0, 8).map((r) => `<button class="btn" data-a="kdish-pick" data-d="${ed}" data-r="${r.id}">${esc(r.name)}</button>`).join('')}</div>
       <button class="volver" data-a="kdish-cancel">Cancelar</button></div>`
+    : kLock() ? `<div class="card"><div class="label">Menú</div><p class="small" style="font-size:15px">Toca el nombre de un plato para ver la receta. Para cambiar el menú, abre el 🔒 de arriba.</p></div>`
     : `<div class="card"><div class="label">Cómo funciona</div><p class="small" style="font-size:15px">✏️ para escribir o elegir un plato · 🔄 para que la app proponga otro · toca el nombre para ver la receta.</p></div>`;
+  const lk = kLock();
   return `<div class="k-cab"><h2>Menú de la semana</h2><span class="k-nav"><button class="volver" data-a="kmweek" data-n="-1">‹ Anterior</button><button class="volver" data-a="kmweek" data-n="1">Siguiente ›</button></span></div>
   <div class="k-two menu">
     <div class="card">${week ? week.map((day, di) => { const dish = day.dishes[0]; const r = dish && dish.recipe ? recipe(dish.recipe) : null; const cole = isLectivo(day.date) ? schoolLunch(day.date) : '';
       return `<div class="k-mrow ${day.date === today() ? 'hoy' : ''}"><span class="d">${esc(cap(DOWL[parse(day.date).getDay()]))}<small>${day.meal === 'comida' ? 'COMIDA' : 'CENA'}${day.date === today() ? ' · HOY' : ''}</small></span>
         <span class="plato">${dish ? (r ? `<a href="${esc(recipeLink(r))}" target="_blank" rel="noopener">${esc(dishName(dish))}</a>` : esc(dishName(dish))) : '<span class="muted">Sin plato</span>'}${cole ? `<small>🏫 Cole: ${esc(cole)}</small>` : ''}</span>
-        <span class="acc"><button class="mini" data-a="kdish-edit" data-d="${day.date}" aria-label="Escribir plato">✏️</button><button class="mini" data-a="kdish-new" data-d="${day.date}" aria-label="Otro plato">🔄</button></span></div>`; }).join('')
-      : `<p class="empty">No hay menú para esta semana.</p><button class="btn dark" data-a="propose" data-k="${key}">Proponer menú</button>`}</div>
-    <div class="k-col">${side}${week ? `<div class="card k-manana"><div class="label">Para la compra</div><p class="small" style="font-size:15px">Pasa a la compra los ingredientes de los platos de la semana.</p><button class="btn dark" data-a="week-shop" data-k="${key}">🛒 Añadir a la compra</button></div>` : ''}</div>
+        ${lk ? '' : `<span class="acc"><button class="mini" data-a="kdish-edit" data-d="${day.date}" aria-label="Escribir plato">✏️</button><button class="mini" data-a="kdish-new" data-d="${day.date}" aria-label="Otro plato">🔄</button></span>`}</div>`; }).join('')
+      : `<p class="empty">No hay menú para esta semana.</p>${lk ? '' : `<button class="btn dark" data-a="propose" data-k="${key}">Proponer menú</button>`}`}</div>
+    <div class="k-col">${side}${week && !lk ? `<div class="card k-manana"><div class="label">Para la compra</div><p class="small" style="font-size:15px">Pasa a la compra los ingredientes de los platos de la semana.</p><button class="btn dark" data-a="week-shop" data-k="${key}">🛒 Añadir a la compra</button></div>` : ''}</div>
   </div>`;
 }
 function kCompra() {
@@ -1248,19 +1269,20 @@ function kCompra() {
   const q = norm(ui.q);
   let sugg = [];
   if (q) { const pool = [...new Set([...db.all('catalog'), ...db.all('shoppingHistory').map((h) => h.name)])]; sugg = pool.filter((n) => norm(n).includes(q)).slice(0, 5); if (!pool.some((n) => norm(n) === q)) sugg.push(ui.q.trim()); }
+  const lk = kLock();
   return `<div class="k-two compra">
     <div class="card"><div class="label">Lista de la compra <span class="seg">${['all', ...stores].map((s) => `<button data-a="shop" data-s="${esc(s)}" ${pressed(s === shop)}>${s === 'all' ? 'Todo' : esc(s)}</button>`).join('')}</span></div>
-      <div class="k-prods">${items.length ? items.map((x) => `<button class="k-prod ${x.done ? 'ok' : ''}" data-a="buy" data-id="${x.id}"><span class="ck">${x.done ? '✓' : ''}</span><span class="tx">${esc(x.name)}</span><small>${fmtQty(x)} · ${esc(x.store)}</small></button>`).join('') : '<p class="empty">La lista está vacía.</p>'}</div>
-      ${got ? `<button class="btn dark" data-a="finish" data-s="${esc(shop)}">Terminar compra (${got})</button>` : ''}</div>
-    <div class="k-col"><div class="card"><div class="label">Añadir</div>
+      <div class="k-prods">${items.length ? items.map((x) => `<${lk ? 'div' : 'button'} class="k-prod ${x.done ? 'ok' : ''}" ${lk ? '' : `data-a="buy" data-id="${x.id}"`}><span class="ck">${x.done ? '✓' : ''}</span><span class="tx">${esc(x.name)}</span><small>${fmtQty(x)} · ${esc(x.store)}</small></${lk ? 'div' : 'button'}>`).join('') : '<p class="empty">La lista está vacía.</p>'}</div>
+      ${got && !lk ? `<button class="btn dark" data-a="finish" data-s="${esc(shop)}">Terminar compra (${got})</button>` : ''}</div>
+    ${lk ? `<div class="k-col"><div class="card"><div class="label">Añadir</div><p class="small" style="font-size:15px">¿Se ha acabado algo? Díselo a papá o a mamá. Para apuntar o tachar aquí, abre el 🔒 de arriba.</p></div></div></div>` : `<div class="k-col"><div class="card"><div class="label">Añadir</div>
       <input id="cq" class="k-input" type="search" data-i="q" value="${esc(ui.q)}" placeholder="¿Qué falta?" autocomplete="off">
       ${sugg.length ? `<div class="chips">${sugg.map((n) => `<button class="btn" data-a="cadd" data-n="${esc(n)}">+ ${esc(n)}</button>`).join('')}</div>` : ''}
       ${due.length ? `<div class="label" style="margin-top:6px">Puede que os falte</div><div class="chips">${due.map((h) => `<button class="btn" data-a="cadd" data-n="${esc(h.name)}">+ ${esc(h.name)}</button>`).join('')}</div>` : ''}</div>
-    </div></div>`;
+    </div></div>`}`;
 }
 function kKid(id) {
   const kid = person(id); const t = today(); const mon = mondayOf(t);
-  const g = db.raw().kidGoal || { goal: 150, prize: '' };
+  const g = db.raw().kidGoal || { goal: 250, prize: '' };
   const week = kidStars(id, mon, addDays(mon, 6));
   const tasks = kidTasksFor(id, t);
   const card = (x) => {
@@ -1287,11 +1309,14 @@ function kRate() {
   const l = kidLog(today(), r.kid, r.t);
   if (l && l.validatedBy) return `<div class="k-over" data-a="krate-close"><div class="dlg">${kDot(kid, 64)}<h2>${esc(task.t)}</h2><div class="big-stars">${starsTxt(l.stars)}</div>
     <p class="small" style="font-size:16px">Ya lo ha validado ${esc(person(l.validatedBy).name)}. Si hay que cambiarlo, desde el móvil.</p><button class="btn dark">Vale</button></div></div>`;
-  const checks = task.checks.length ? `<div class="checks big">${task.checks.map((c, i) => `<button data-a="kcheck" data-i="${i}" class="${r.checks.includes(i) ? 'ok' : ''}">${r.checks.includes(i) ? '✓ ' : ''}${esc(c)}</button>`).join('')}</div>` : '';
+  if (r.ask) return `<div class="k-over"><div class="dlg">${kDot(kid, 96)}<h2>¿Eres ${esc(kid.name)}?</h2>
+    <p class="small" style="font-size:16px">Cada uno se pone las estrellas de sus tareas.</p>
+    <div style="display:flex;gap:10px"><button class="btn" data-a="krate-close">No</button><button class="btn dark" data-a="kme">Sí, soy ${esc(kid.name)}</button></div></div></div>`;
+  const checks = task.checks.length ?`<div class="checks big">${task.checks.map((c, i) => `<button data-a="kcheck" data-i="${i}" class="${r.checks.includes(i) ? 'ok' : ''}">${r.checks.includes(i) ? '✓ ' : ''}${esc(c)}</button>`).join('')}</div>` : '';
   return `<div class="k-over"><div class="dlg">${kDot(kid, 64)}<h2>¡Bien, ${esc(kid.name)}! ¿Qué tal te ha salido «${esc(task.t)}»?</h2>${checks}
     <div class="big-stars">${[1, 2, 3, 4, 5].map((n) => `<button data-a="kstar" data-n="${n}" class="${n <= r.stars ? 'on' : ''}" aria-label="${n} estrellas">★</button>`).join('')}</div>
     <div class="niveles"><span>Regular</span><span>A medias</span><span>Bien</span><span>Muy bien</span><span>¡Genial!</span></div>
-    <div style="display:flex;gap:10px">${l ? '<button class="btn" data-a="kundo">Quitar</button>' : ''}<button class="btn" data-a="krate-close">Cancelar</button><button class="btn dark" data-a="ksave" ${r.stars ? '' : 'disabled'}>¡Listo!</button></div></div></div>`;
+    <div style="display:flex;gap:10px">${l && !kLock() ? '<button class="btn" data-a="kundo">Quitar</button>' : ''}<button class="btn" data-a="krate-close">Cancelar</button><button class="btn dark" data-a="ksave" ${r.stars ? '' : 'disabled'}>¡Listo!</button></div></div></div>`;
 }
 function kNightView() {
   const tm = addDays(today(), 1); const its = itemsOn(tm); const p = pickup(tm);
@@ -1316,11 +1341,21 @@ function cocina() {
   <header class="k-top">
     <button class="home" data-a="kgo" data-v="hoy" aria-label="Inicio"><span class="logo">${people().map((x) => `<span style="background:${x.tone};color:${x.ink}">${x.name[0]}</span>`).join('')}</span><small>INICIO</small></button>
     <div class="fecha"><h1><em>${esc(cap(DOWL[d.getDay()]))},</em> ${d.getDate()} de ${esc(MONL[d.getMonth()])}</h1><p>${esc(saludo())} · ${wxHeader()}${!st.online ? ' · <b>sin conexión</b>' : st.error ? ' · <b>cambios sin guardar</b>' : ''}</p></div>
+    <button class="k-lock ${kOpen() ? 'open' : ''}" data-a="klock" aria-label="${kOpen() ? 'Cerrar el candado' : 'Abrir el candado'}">${kOpen() ? '🔓' : '🔒'}</button>
     <div class="hora"><b>${nowHM()}</b></div>
   </header>
   <nav class="k-tabs">${tabs.map(([v, l]) => `<button class="k-tab" data-a="kgo" data-v="${v}" ${pressed(act === v)}>${l}</button>`).join('')}</nav>
   <main class="k-screen">${body}</main>
-  ${kRate()}</div>`;
+  ${kRate()}${kPin()}</div>`;
+}
+function kPin() {
+  const p = K().pin; if (p == null) return '';
+  const set = (db.raw().kitchenPin || {}).code;
+  const pad = `<div class="pin-dots">${[0, 1, 2, 3].map((i) => `<i class="${i < p.length ? 'on' : ''}"></i>`).join('')}</div>
+    ${K().pinErr ? '<p class="small err">Código incorrecto</p>' : '<p class="small">Escribe el código</p>'}
+    <div class="pin-pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-a="kpin" data-n="${n}">${n}</button>`).join('')}<button data-a="kpin-close">Salir</button><button data-a="kpin" data-n="0">0</button><button data-a="kpin-del" aria-label="Borrar">⌫</button></div>`;
+  return `<div class="k-over"><div class="dlg k-pin"><h2>🔒 Solo papá y mamá</h2>
+    ${set ? pad : '<p class="small" style="font-size:16px">Todavía no hay código. Ponlo desde el móvil: Inicio → Estrellas → Candado de la cocina.</p><button class="btn dark" data-a="kpin-close">Vale</button>'}</div></div>`;
 }
 const KA = {
   kgo: (el) => { const k = K(); k.v = el.dataset.v; k.rate = null; k.editDish = null; k.editDay = null; if (k.v === 'hoy') { k.week = 0; k.month = 0; } render(); },
@@ -1333,7 +1368,7 @@ const KA = {
   'kdish-cancel': () => { K().editDish = null; render(); },
   'kdish-new': (el) => kSetDish(el.dataset.d, null, null, true),
   'kdish-pick': (el) => kSetDish(el.dataset.d, el.dataset.r),
-  krate: (el) => { const l = kidLog(today(), el.dataset.kid, el.dataset.t); K().rate = { kid: el.dataset.kid, t: el.dataset.t, stars: l ? l.stars : 0, checks: l ? [...(l.checks || [])] : [] }; render(); },
+  krate: (el) => { const l = kidLog(today(), el.dataset.kid, el.dataset.t); K().rate = { kid: el.dataset.kid, t: el.dataset.t, stars: l ? l.stars : 0, checks: l ? [...(l.checks || [])] : [], ask: !(K().me === el.dataset.kid && Date.now() < (K().meUntil || 0)) }; render(); },
   'krate-close': () => { K().rate = null; render(); },
   kstar: (el) => { K().rate.stars = +el.dataset.n; render(); },
   kcheck: (el) => { const r = K().rate; const i = +el.dataset.i; r.checks = r.checks.includes(i) ? r.checks.filter((x) => x !== i) : [...r.checks, i]; render(); },
@@ -1345,9 +1380,26 @@ const KA = {
     if (db.get('kidlog', id)) db.update('kidlog', id, o); else db.add('kidlog', { id, ...o });
     render(); toast(r.stars >= 4 ? '¡Genial! ⭐' : 'Apuntado ⭐');
   },
-  kundo: () => { const r = K().rate; K().rate = null; db.remove('kidlog', logId(today(), r.kid, r.t)); render(); },
+  klock: () => { const k = K(); if (kOpen()) { k.unlock = 0; k.editDish = null; k.editDay = null; toast('Candado cerrado'); } else { k.pin = ''; k.pinErr = false; } render(); },
+  kpin: (el) => {
+    const k = K(); if (k.pin == null) return; k.pinErr = false; k.pin += el.dataset.n;
+    if (k.pin.length >= 4) { if (k.pin === (db.raw().kitchenPin || {}).code) { k.pin = null; k.unlock = Date.now() + 5 * 60 * 1000; toast('Abierto 5 minutos 🔓'); } else { k.pin = ''; k.pinErr = true; } }
+    render();
+  },
+  'kpin-del': () => { const k = K(); if (k.pin) k.pin = k.pin.slice(0, -1); render(); },
+  'kpin-close': () => { K().pin = null; render(); },
+  kme: () => { const k = K(); if (!k.rate) return; k.me = k.rate.kid; k.meUntil = Date.now() + 5 * 60 * 1000; k.rate.ask = false; render(); },
+  kundo:() => { const r = K().rate; K().rate = null; db.remove('kidlog', logId(today(), r.kid, r.t)); render(); },
   kwake: () => { K().wake = Date.now() + 3 * 60 * 1000; render(); },
-  vstar: (el) => { const n = +el.dataset.n; db.update('kidlog', el.dataset.id, { stars: n, validatedBy: db.settings().user, changed: true, validatedAt: Date.now() }); toast('Corregido'); },
+  vedit: (el) => { const l = db.get('kidlog', el.dataset.id); if (!l) return; ui.vedit = { id: l.id, stars: l.stars }; render(); },
+  'vedit-cancel': () => { ui.vedit = null; render(); },
+  vstar: (el) => { if (!ui.vedit) return; ui.vedit.stars = +el.dataset.n; render(); },
+  'vedit-save': () => {
+    const v = ui.vedit; ui.vedit = null; const l = v && db.get('kidlog', v.id); if (!l) { render(); return; }
+    const orig = l.orig || l.stars;
+    db.update('kidlog', l.id, { stars: v.stars, orig, changed: v.stars !== orig, validatedBy: db.settings().user, validatedAt: Date.now() });
+    render(); toast(v.stars !== orig ? `Cambiado a ${v.stars} ⭐` : 'Validado');
+  },
   valid: (el) => { db.update('kidlog', el.dataset.id, { validatedBy: db.settings().user, validatedAt: Date.now() }); toast('Validado'); },
   'valid-all': () => { for (const l of pendingValid()) db.update('kidlog', l.id, { validatedBy: db.settings().user, validatedAt: Date.now() }); toast('Todas validadas'); }
 };
@@ -1366,7 +1418,8 @@ function kSetDish(date, recipeId, text, random) {
 const KF = {
   kevent: (fd, f) => { const who = fd.get('who'); db.add('events', { title: fd.get('title').trim(), who: [who], date: f.dataset.d, time: fd.get('time') || '', endTime: '', place: '', repeat: 'no', days: [], until: '', schoolOnly: false }); K().editDay = null; toast('Apuntado'); },
   kdish: (fd, f) => kSetDish(f.dataset.d, null, cap(fd.get('text').trim())),
-  kidgoal: (fd) => { db.set('kidGoal', { goal: Math.max(10, +fd.get('goal') || 150), prize: fd.get('prize').trim() }); toast('Guardado'); }
+  'kpin-set': (fd, f) => { const c = String(fd.get('code') || '').trim(); if (!/^\d{4}$/.test(c)) { toast('Tienen que ser 4 números'); return; } db.set('kitchenPin', { code: c }); f.reset(); toast('Código del candado guardado'); },
+  kidgoal: (fd) => { db.set('kidGoal', { goal: Math.max(10, +fd.get('goal') || 250), prize: fd.get('prize').trim() }); toast('Guardado'); }
 };
 
 Object.assign(A, KA);
@@ -1376,12 +1429,14 @@ document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-a]');
   if (!el || !A[el.dataset.a]) return;
   e.preventDefault();
+  if (kLock() && K_LOCKED.has(el.dataset.a)) { K().pin = ''; K().pinErr = false; render(); return; }
   A[el.dataset.a](el, e);
 });
 document.addEventListener('submit', (e) => {
   const f = e.target.closest('form[data-f]');
   if (!f || !F[f.dataset.f]) return;
   e.preventDefault();
+  if (kLock() && K_LOCKED.has(f.dataset.f)) return;
   F[f.dataset.f](new FormData(f), f);
 });
 document.addEventListener('input', (e) => {
