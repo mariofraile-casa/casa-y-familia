@@ -204,13 +204,15 @@ function armed(el, label = '¿Seguro? Toca otra vez') {
 }
 const SANDBOXED = /claude/.test(location.hostname) || window.top !== window;
 const ROUTES = {
-  '': home, agenda, tareas, compra, menu, recetario, cole, salud, casa, tiempo, ajustes, anadir, turno
+  '': home, agenda, tareas, compra, menu, recetario, cole, salud, casa, tiempo, ajustes, anadir, turno, cocina, estrellas
 };
 
 function render() {
   if (phase !== 'ok' && phase !== 'offline') { app.innerHTML = login(); const f = document.getElementById(ui.login.email ? 'l-pass' : 'l-email'); if (f && phase === 'login' && !ui.login.busy) f.focus(); return; }
   const [r, ...args] = parts();
-  const fn = ROUTES[r || ''] || home;
+  const kiosk = isKiosk();
+  document.body.classList.toggle('kiosk', kiosk);
+  const fn = kiosk ? cocina : ROUTES[r || ''] || home;
   const active = document.activeElement;
   const focusId = active && active.id;
   const sel = focusId && active.selectionStart != null ? [active.selectionStart, active.selectionEnd] : null;
@@ -274,6 +276,8 @@ function homeAlerts() {
   const st = auth.status();
   if (st.error) out.push(`<div class="alert warn"><span><b>Cambios sin guardar</b>${esc(st.error)}</span></div>`);
   else if (!st.online) out.push(`<div class="alert info"><span><b>Sin conexión</b>Lo que apuntes se guarda en cuanto vuelva.</span></div>`);
+  const pv = pendingValid().length;
+  if (pv) out.push(`<a class="alert info" href="#estrellas"><span><b>⭐ Estrellas para validar: ${pv}</b>Los niños se han puntuado sus tareas en la cocina. Tocad para validarlas o corregirlas.</span></a>`);
   const t = today();
   const edu = db.raw().educamos;
   if (!eduOk()) {
@@ -923,6 +927,7 @@ function anadir(type, id) {
       <div class="field"><span>Días (si es semanal)</span><div class="chips">${'LMXJVSD'.split('').map((l, k) => `<label class="chip"><input type="checkbox" name="days" value="${k + 1}" ${(v.days || []).includes(k + 1) ? 'checked' : ''}> ${l}</label>`).join('')}</div></div>
       <label class="field"><span>Hasta el (si se repite)</span><input type="date" name="until" value="${esc(v.until)}"></label>
       <label class="chip"><input type="checkbox" name="schoolOnly" value="1" ${v.schoolOnly ? 'checked' : ''}> Solo días de cole (no en vacaciones ni festivos)</label>
+      <label class="chip"><input type="checkbox" name="private" value="1" ${v.private ? 'checked' : ''}> Privado (no sale en la pantalla de la cocina)</label>
       <p class="small">Si Mario apunta algo por la tarde y Silvia trabaja, la app avisa de que nadie recoge a los niños.</p>
       <button class="btn block">Guardar</button>
       ${ev ? `<button type="button" class="btn danger block" data-a="del" data-col="events" data-id="${ev.id}" data-back="#agenda">Borrar</button>` : ''}</form>`;
@@ -1037,7 +1042,7 @@ const F = {
     L.busy = false; render();
   },
   event: (fd, f) => {
-    const who = fd.getAll('who'); const o = { title: fd.get('title').trim(), who: who.length ? who : ['f'], date: fd.get('date'), time: fd.get('time'), endTime: fd.get('endTime'), place: fd.get('place').trim(), repeat: fd.get('repeat'), days: fd.getAll('days').map(Number), until: fd.get('until'), schoolOnly: fd.get('schoolOnly') === '1' };
+    const who = fd.getAll('who'); const o = { title: fd.get('title').trim(), who: who.length ? who : ['f'], date: fd.get('date'), time: fd.get('time'), endTime: fd.get('endTime'), place: fd.get('place').trim(), repeat: fd.get('repeat'), days: fd.getAll('days').map(Number), until: fd.get('until'), schoolOnly: fd.get('schoolOnly') === '1', private: fd.get('private') === '1' };
     if (f.dataset.id) db.update('events', f.dataset.id, o); else db.add('events', o);
     location.hash = '#agenda'; toast('Guardado en la agenda');
   },
@@ -1056,6 +1061,316 @@ const F = {
     location.hash = '#agenda'; toast('Trabajo de Silvia guardado');
   }
 };
+
+
+/* ───────────── Tareas y estrellas de los niños ───────────── */
+// Configuración en kv «kidTasks» { idNiño: [{ id, t, e, m, days, school, mochila, checks, goal }] }.
+// Cada tarea hecha es una fila de «kidlog» con id «fecha_niño_tarea»: estrellas (1-5) que se pone el niño
+// y validatedBy cuando papá o mamá la validan o la corrigen.
+const MOMENTS = [['manana', '☀️ Por la mañana'], ['tarde', '📚 Cole y tarde'], ['noche', '🌙 Por la noche']];
+const nextSchoolDay = (d) => { let x = addDays(d, 1); for (let k = 0; k < 12 && !isLectivo(x); k++) x = addDays(x, 1); return x; };
+function kidTasksFor(kid, date) {
+  const conf = (db.raw().kidTasks || {})[kid] || [];
+  const dow = isoDow(date); const lect = isLectivo(date);
+  const out = [];
+  for (const t of conf) {
+    if (t.days && t.days.length && !t.days.includes(dow)) continue;
+    if (t.school && !lect) continue;
+    const checks = (t.checks || []).filter((c) => !c.days || !c.days.length || c.days.includes(dow)).map((c) => c.t);
+    if (t.mochila) {
+      for (const ev of db.all('events')) {
+        if (!(ev.who || []).includes(kid) || !occursOn(ev, date)) continue;
+        const n = norm(ev.title);
+        if (/futbol/.test(n)) checks.push('Material de fútbol');
+        else if (/piscina|natacion/.test(n)) checks.push('Material de piscina');
+      }
+      for (const s of db.all('school')) if (s.kid === kid && s.date === date && s.type === 'traer' && !s.done) checks.push(s.title);
+    }
+    out.push({ id: t.id, t: t.t, e: t.e || '⭐', m: t.m || 'tarde', checks: [...new Set(checks)], goal: !!t.goal });
+  }
+  // Lo de Educamos sale solo: deberes y exámenes del siguiente día de cole.
+  const next = nextSchoolDay(date);
+  for (const s of db.all('school')) {
+    if (s.kid !== kid || s.done || s.date <= date || s.date > next) continue;
+    if (s.type === 'examen') out.push({ id: 'edu_' + s.id, t: 'Estudiar: ' + s.title.replace(/^examen( de)?\s*/i, ''), e: '🔬', m: 'tarde', sub: 'Examen ' + relDay(s.date), checks: [] });
+    else if (s.type === 'deberes') out.push({ id: 'edu_' + s.id, t: s.title, e: '✏️', m: 'tarde', sub: 'Deberes para ' + relDay(s.date), checks: [] });
+  }
+  return out;
+}
+const logId = (date, kid, task) => `${date}_${kid}_${task}`;
+const kidLog = (date, kid, task) => db.get('kidlog', logId(date, kid, task));
+function kidStars(kid, from, to) { return db.all('kidlog').filter((l) => l.kid === kid && l.date >= from && l.date <= to).reduce((s, l) => s + (l.stars || 0), 0); }
+const starsTxt = (n) => `${'★'.repeat(n)}<i>${'★'.repeat(5 - n)}</i>`;
+const pendingValid = () => db.all('kidlog').filter((l) => !l.validatedBy && l.date >= addDays(today(), -14)).sort((a, b) => b.date.localeCompare(a.date) || (b.at || 0) - (a.at || 0));
+
+/* En el móvil: validar las estrellas */
+function estrellas() {
+  const p = pendingValid();
+  const mon = mondayOf(today());
+  const g = db.raw().kidGoal || { goal: 150, prize: '' };
+  const row = (l) => { const k = person(l.kid); return `<div class="vrow">
+    <div class="vtop"><span class="who" style="background:${k.tone};color:${k.ink}">${esc(k.name[0])}</span>
+    <span class="grow"><b>${esc(l.title)}</b><small>${esc(k.name)} · ${esc(relDay(l.date))}</small></span></div>
+    <div class="vbot">    <span class="stars-pick">${[1, 2, 3, 4, 5].map((n) => `<button data-a="vstar" data-id="${l.id}" data-n="${n}" aria-label="${n} estrellas" class="${n <= l.stars ? 'on' : ''}">★</button>`).join('')}</span>
+    <button class="btn sm" data-a="valid" data-id="${l.id}">✓ Validar</button></div></div>`; };
+  return `${bar('Estrellas de los niños')}
+  <div class="card"><span class="label">Esta semana</span>
+    ${kids().map((k) => { const s = kidStars(k.id, mon, addDays(mon, 6)); return `<div class="row"><span>${esc(k.name)}</span><span class="end">${s} ⭐ de ${g.goal}</span></div>`; }).join('')}
+    ${g.prize ? `<p class="small">🎁 Premio: ${esc(g.prize)}</p>` : ''}</div>
+  <div class="card"><div class="card-head"><span class="label">Para validar · ${p.length}</span>${p.length > 1 ? '<button class="btn sm" data-a="valid-all">✓ Validar todas</button>' : ''}</div>
+    <p class="small">Se las ponen ellos en la cocina y ya cuentan. Validad con un toque o tocad otra estrella para corregirla.</p>
+    <div class="list">${p.length ? p.map(row).join('') : '<p class="empty">Nada pendiente. ¡Todo validado!</p>'}</div></div>
+  <details class="card"><summary>Meta y premio de la semana</summary>
+    <form class="inline-add" data-f="kidgoal" style="flex-wrap:wrap;gap:8px;margin-top:8px"><input type="number" name="goal" min="10" step="5" value="${g.goal}" aria-label="Estrellas de la meta" style="max-width:90px">
+    <input type="text" name="prize" value="${esc(g.prize)}" placeholder="Premio" aria-label="Premio"><button class="btn sm">Guardar</button></form></details>`;
+}
+
+/* ───────────── COCINA (iPad en la pared) ───────────── */
+const K = () => (ui.k = ui.k || { v: 'hoy', date: null, week: 0, month: 0, rate: null, wake: 0, editDay: null });
+const isKiosk = () => auth.me().person === 'k' || parts()[0] === 'cocina';
+const kNight = () => { const h = new Date().getHours(); return (h >= 22 || h < 7) && Date.now() > (K().wake || 0); };
+const kDot = (p, size = 30) => `<span class="dot" style="background:${p.tone};color:${p.ink};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.42)}px">${esc(p.name[0])}</span>`;
+const kDots = (ids) => `<span class="dots">${ids.map((id) => kDot(person(id))).join('')}</span>`;
+const kWeekday = (d) => cap(DOWL[parse(d).getDay()]);
+
+function kItem(it, date, now) {
+  const past = date === today() && it.time && (toMin(it.end) ?? toMin(it.time) + 60) < now;
+  const cur = date === today() && it.time && toMin(it.time) <= now && now < (toMin(it.end) ?? toMin(it.time) + 60);
+  return `<div class="k-item ${past ? 'past' : ''} ${cur ? 'now' : ''}"><span class="t">${esc(it.time || '—')}</span>${kDots(it.who.length ? it.who : ['f'])}
+    <span class="tx">${esc(it.title)}${cur ? ' <span class="ahora">AHORA</span>' : ''}${it.sub ? `<small>${esc(it.sub)}</small>` : ''}${it.away ? `<small class="away">🌙 Duerme en ${esc(it.away)}</small>` : ''}</span></div>`;
+}
+function kBanners(d) {
+  const out = [];
+  const sh = db.all('shifts').filter((x) => x.date === d && WORK.has(x.kind));
+  const away = db.all('shifts').find((x) => x.date === d && x.away);
+  if (sh.length) out.push(`<div class="k-banner silvia"><span class="ico">${sh[0].kind === 'vuelo' ? '✈️' : '💼'}</span><div><b>${esc(shiftTitle(sh[0]))}</b><span>${esc(sh.map(shiftSub).filter(Boolean).join(' · '))}${away ? ` · 🌙 duerme en ${esc(away.away)}` : ''}</span></div></div>`);
+  else if (isoDow(d) <= 7) out.push(`<div class="k-banner silvia soft"><span class="ico">🏡</span><div><b>Silvia no trabaja</b><span>${esc(kWeekday(d))}</span></div></div>`);
+  const p = pickup(d);
+  if (p && p.clash) out.push(`<div class="k-banner clash"><span class="ico">⚠️</span><div><b>Nadie recoge a los niños</b><span>Silvia trabaja y Mario tiene algo por la tarde</span></div></div>`);
+  else if (p) out.push(`<div class="k-banner recoge"><span class="ico">🎒</span><div><b>Recoge ${esc(p.who)}</b><span>${p.set ? 'Apuntado' : 'Por la tarde'}</span></div></div>`);
+  else if (isLectivo(d)) out.push(`<div class="k-banner recoge soft"><span class="ico">🎒</span><div><b>Día de cole</b><span>Recogida normal</span></div></div>`);
+  else out.push(`<div class="k-banner recoge soft"><span class="ico">🎈</span><div><b>Sin cole</b><span>${esc(kWeekday(d))}</span></div></div>`);
+  return `<div class="k-banners">${out.join('')}</div>`;
+}
+function kMeal(d) {
+  const md = menuDay(d); const dish = md && md.dishes[0];
+  return { md, dish, name: dish ? dishName(dish) : '', meal: md ? md.meal : (isoDow(d) >= 6 ? 'comida' : 'cena'), r: dish && dish.recipe ? recipe(dish.recipe) : null };
+}
+function kMealCard(d, title) {
+  const m = kMeal(d); const cole = isLectivo(d) ? schoolLunch(d) : '';
+  return `<div class="card k-cena"><div class="label">${esc(title || (m.meal === 'comida' ? 'Comida' : 'Cena'))} <button class="mas" data-a="kgo" data-v="menu">Ver menú ›</button></div>
+    <h2>${m.name ? esc(m.name) : '<span class="muted">Sin plato todavía</span>'}</h2>
+    ${cole ? `<p class="small">🏫 En el cole: ${esc(cole)}</p>` : ''}
+    <div class="acciones"><button class="btn" data-a="kdish-new" data-d="${d}">🔄 Cambiar plato</button>${m.r ? `<a class="btn" href="${esc(recipeLink(m.r))}" target="_blank" rel="noopener">📖 Receta</a>` : ''}</div></div>`;
+}
+function kMochila(d) {
+  return kids().map((k) => { const t = kidTasksFor(k.id, d).find((x) => x.checks.length); return t ? `<p class="k-moch"><b>${esc(k.name)}:</b> ${esc(t.checks.join(' · '))}</p>` : ''; }).join('');
+}
+function kHoy() {
+  const t = today(); const tm = addDays(t, 1); const now = toMin(nowHM());
+  const its = itemsOn(t); const itm = itemsOn(tm);
+  return `${kBanners(t)}
+  <div class="k-two">
+    <div class="card k-list"><div class="label">Hoy ${kDots(people().map((p) => p.id))}</div>
+      <div class="k-lista">${its.length ? its.map((it) => kItem(it, t, now)).join('') : '<p class="empty">Nada apuntado hoy.</p>'}</div></div>
+    <div class="k-col">${kMealCard(t, kMeal(t).meal === 'comida' ? 'Comida de hoy' : 'Cena de hoy')}
+      <button class="card k-manana" data-a="kday" data-d="${tm}"><div class="label">Mañana · ${esc(DOWL[parse(tm).getDay()])} ${parse(tm).getDate()} <span class="mas">Ver todo ›</span></div>
+        ${itm.slice(0, 4).map((it) => kItem(it, tm, now)).join('') || '<p class="empty">Nada apuntado.</p>'}${itm.length > 4 ? `<p class="small">+${itm.length - 4} más</p>` : ''}</button></div>
+  </div>`;
+}
+function kDia() {
+  const k = K(); const d = k.date || today(); const now = toMin(nowHM());
+  const its = itemsOn(d);
+  const add = k.editDay === d ? `<form class="k-add" data-f="kevent" data-d="${d}"><input name="title" placeholder="¿Qué hay?" required aria-label="Qué hay"><input type="time" name="time" aria-label="Hora">
+    <select name="who" aria-label="Para quién">${[...people(), FAM].map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select><button class="btn dark">Guardar</button></form>`
+    : `<button class="btn dark" data-a="kadd" data-d="${d}">＋ Añadir algo a este día</button>`;
+  return `<div class="k-cab"><h2>${esc(kWeekday(d))}, ${parse(d).getDate()} de ${esc(MONL[parse(d).getMonth()])}</h2>
+    <span class="k-nav"><button class="volver" data-a="kday" data-d="${addDays(d, -1)}">‹ ${esc(DOW[parse(addDays(d, -1)).getDay()])}</button><button class="volver" data-a="kday" data-d="${addDays(d, 1)}">${esc(DOW[parse(addDays(d, 1)).getDay()])} ›</button><button class="volver" data-a="kgo" data-v="${esc(k.from || 'hoy')}">Cerrar</button></span></div>
+  ${kBanners(d)}
+  <div class="k-two">
+    <div class="card k-list"><div class="label">Todo el día</div><div class="k-lista">${its.length ? its.map((it) => kItem(it, d, now)).join('') : '<p class="empty">Nada apuntado.</p>'}</div>${add}</div>
+    <div class="k-col">${kMealCard(d)}${isLectivo(d) ? `<div class="card k-manana"><div class="label">Mochila</div>${kMochila(d) || '<p class="empty">Nada especial.</p>'}</div>` : ''}</div>
+  </div>`;
+}
+function kCal() {
+  const k = K(); const mon = addDays(mondayOf(today()), k.week * 7); const t = today();
+  return `<div class="k-cab"><h2>Semana del ${parse(mon).getDate()} de ${esc(MONL[parse(mon).getMonth()])}</h2>
+    <span class="k-nav"><button class="volver" data-a="kweek" data-n="-1">‹</button><span class="seg"><span class="on">Semana</span><button data-a="kgo" data-v="mes">Mes</button></span><button class="volver" data-a="kweek" data-n="1">›</button>${k.week ? '<button class="volver" data-a="kweek" data-n="0">Hoy</button>' : ''}</span></div>
+  <div class="k-week">${[0, 1, 2, 3, 4, 5, 6].map((i) => {
+    const d = addDays(mon, i); const its = itemsOn(d); const m = kMeal(d); const p = pickup(d);
+    return `<button class="k-wd ${d === t ? 'hoy' : ''} ${isLectivo(d) ? '' : 'nocole'}" data-a="kday" data-d="${d}" data-from="cal"><h3>${esc(DOW[parse(d).getDay()])} <small>${parse(d).getDate()}</small></h3>
+      ${its.slice(0, 6).map((it) => { const c = colorOf(it.who); return `<span class="ev" style="background:${c.tone};color:${c.ink}">${esc(it.short || it.title)}</span>`; }).join('')}${its.length > 6 ? `<span class="small">+${its.length - 6}</span>` : ''}
+      ${its.some((it) => it.away) ? `<span class="ev luna">🌙 Silvia fuera</span>` : ''}${p && p.clash ? '<span class="ev clash">⚠️ Nadie recoge</span>' : ''}
+      ${m.name ? `<span class="cenita">🍽️ ${esc(m.name)}</span>` : ''}</button>`;
+  }).join('')}</div>`;
+}
+function kMes() {
+  const k = K(); const base = parse(today()); base.setDate(1); base.setMonth(base.getMonth() + k.month);
+  const first = iso(base); const start = mondayOf(first); const t = today();
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const d = addDays(start, i); const out = d.slice(0, 7) !== first.slice(0, 7);
+    if (i >= 35 && out) break;
+    const its = out ? [] : itemsOn(d);
+    cells.push(`<button class="k-md ${out ? 'fuera' : ''} ${d === t ? 'hoy' : ''} ${isLectivo(d) ? '' : 'nocole'}" ${out ? 'disabled' : `data-a="kday" data-d="${d}" data-from="mes"`}><b>${parse(d).getDate()}</b>
+      ${its.slice(0, 3).map((it) => { const c = colorOf(it.who); return `<span class="p" style="background:${c.tone};color:${c.ink}">${esc(it.short || it.title)}</span>`; }).join('')}${its.length > 3 ? `<span class="p mas">+${its.length - 3}</span>` : ''}</button>`);
+  }
+  return `<div class="k-cab"><h2>${esc(cap(MONL[base.getMonth()]))} ${base.getFullYear()}</h2>
+    <span class="k-nav"><button class="volver" data-a="kmonth" data-n="-1">‹</button><span class="seg"><button data-a="kgo" data-v="cal">Semana</button><span class="on">Mes</span></span><button class="volver" data-a="kmonth" data-n="1">›</button></span></div>
+  <div class="k-dows">${['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((x) => `<span>${x}</span>`).join('')}</div>
+  <div class="k-mes" style="grid-template-rows:repeat(${cells.length / 7},1fr)">${cells.join('')}</div>`;
+}
+function kMenu() {
+  const k = K(); const key = weekKey(k.mweek || 0); const week = db.raw().menu[key];
+  const ed = k.editDish;
+  const side = ed ? `<div class="card"><div class="label">Cambiar ${esc(DOWL[parse(ed).getDay()])}</div>
+      <form class="k-add" data-f="kdish" data-d="${ed}"><input name="text" placeholder="Escribe un plato…" required aria-label="Plato"><button class="btn dark">Poner</button></form>
+      <div class="label" style="margin-top:4px">O elige del recetario</div>
+      <div class="chips k-recetas">${safeRecipes().filter((r) => (r.when || 'ambas') === 'ambas' || r.when === (isoDow(ed) >= 6 ? 'comida' : 'cena')).sort(() => Math.random() - 0.5).slice(0, 8).map((r) => `<button class="btn" data-a="kdish-pick" data-d="${ed}" data-r="${r.id}">${esc(r.name)}</button>`).join('')}</div>
+      <button class="volver" data-a="kdish-cancel">Cancelar</button></div>`
+    : `<div class="card"><div class="label">Cómo funciona</div><p class="small" style="font-size:15px">✏️ para escribir o elegir un plato · 🔄 para que la app proponga otro · toca el nombre para ver la receta.</p></div>`;
+  return `<div class="k-cab"><h2>Menú de la semana</h2><span class="k-nav"><button class="volver" data-a="kmweek" data-n="-1">‹ Anterior</button><button class="volver" data-a="kmweek" data-n="1">Siguiente ›</button></span></div>
+  <div class="k-two menu">
+    <div class="card">${week ? week.map((day, di) => { const dish = day.dishes[0]; const r = dish && dish.recipe ? recipe(dish.recipe) : null; const cole = isLectivo(day.date) ? schoolLunch(day.date) : '';
+      return `<div class="k-mrow ${day.date === today() ? 'hoy' : ''}"><span class="d">${esc(cap(DOWL[parse(day.date).getDay()]))}<small>${day.meal === 'comida' ? 'COMIDA' : 'CENA'}${day.date === today() ? ' · HOY' : ''}</small></span>
+        <span class="plato">${dish ? (r ? `<a href="${esc(recipeLink(r))}" target="_blank" rel="noopener">${esc(dishName(dish))}</a>` : esc(dishName(dish))) : '<span class="muted">Sin plato</span>'}${cole ? `<small>🏫 Cole: ${esc(cole)}</small>` : ''}</span>
+        <span class="acc"><button class="mini" data-a="kdish-edit" data-d="${day.date}" aria-label="Escribir plato">✏️</button><button class="mini" data-a="kdish-new" data-d="${day.date}" aria-label="Otro plato">🔄</button></span></div>`; }).join('')
+      : `<p class="empty">No hay menú para esta semana.</p><button class="btn dark" data-a="propose" data-k="${key}">Proponer menú</button>`}</div>
+    <div class="k-col">${side}${week ? `<div class="card k-manana"><div class="label">Para la compra</div><p class="small" style="font-size:15px">Pasa a la compra los ingredientes de los platos de la semana.</p><button class="btn dark" data-a="week-shop" data-k="${key}">🛒 Añadir a la compra</button></div>` : ''}</div>
+  </div>`;
+}
+function kCompra() {
+  const stores = db.all('stores'); const list = db.all('shopping');
+  const shop = ui.shop && (ui.shop === 'all' || stores.includes(ui.shop)) ? ui.shop : 'all';
+  const items = list.filter((x) => shop === 'all' || x.store === shop).sort((a, b) => a.done - b.done);
+  const got = items.filter((x) => x.done).length;
+  const due = dueItems().filter((h) => !list.some((x) => !x.done && norm(x.name) === norm(h.name))).slice(0, 6);
+  const q = norm(ui.q);
+  let sugg = [];
+  if (q) { const pool = [...new Set([...db.all('catalog'), ...db.all('shoppingHistory').map((h) => h.name)])]; sugg = pool.filter((n) => norm(n).includes(q)).slice(0, 5); if (!pool.some((n) => norm(n) === q)) sugg.push(ui.q.trim()); }
+  return `<div class="k-two compra">
+    <div class="card"><div class="label">Lista de la compra <span class="seg">${['all', ...stores].map((s) => `<button data-a="shop" data-s="${esc(s)}" ${pressed(s === shop)}>${s === 'all' ? 'Todo' : esc(s)}</button>`).join('')}</span></div>
+      <div class="k-prods">${items.length ? items.map((x) => `<button class="k-prod ${x.done ? 'ok' : ''}" data-a="buy" data-id="${x.id}"><span class="ck">${x.done ? '✓' : ''}</span><span class="tx">${esc(x.name)}</span><small>${fmtQty(x)} · ${esc(x.store)}</small></button>`).join('') : '<p class="empty">La lista está vacía.</p>'}</div>
+      ${got ? `<button class="btn dark" data-a="finish" data-s="${esc(shop)}">Terminar compra (${got})</button>` : ''}</div>
+    <div class="k-col"><div class="card"><div class="label">Añadir</div>
+      <input id="cq" class="k-input" type="search" data-i="q" value="${esc(ui.q)}" placeholder="¿Qué falta?" autocomplete="off">
+      ${sugg.length ? `<div class="chips">${sugg.map((n) => `<button class="btn" data-a="cadd" data-n="${esc(n)}">+ ${esc(n)}</button>`).join('')}</div>` : ''}
+      ${due.length ? `<div class="label" style="margin-top:6px">Puede que os falte</div><div class="chips">${due.map((h) => `<button class="btn" data-a="cadd" data-n="${esc(h.name)}">+ ${esc(h.name)}</button>`).join('')}</div>` : ''}</div>
+    </div></div>`;
+}
+function kKid(id) {
+  const kid = person(id); const t = today(); const mon = mondayOf(t);
+  const g = db.raw().kidGoal || { goal: 150, prize: '' };
+  const week = kidStars(id, mon, addDays(mon, 6));
+  const tasks = kidTasksFor(id, t);
+  const card = (x) => {
+    const l = kidLog(t, id, x.id);
+    const st = l ? (l.validatedBy ? `<span class="quien ok">✓ ${l.changed ? 'Corregido' : 'Validado'} por ${esc(person(l.validatedBy).name)}</span>` : '<span class="quien">Falta validar</span>') : '<span class="estado">Toca al terminar</span>';
+    return `<button class="tc ${l ? 'hecha' : ''} ${x.goal && !l ? 'goal' : ''} ${x.checks.length ? 'wide' : ''}" data-a="krate" data-kid="${id}" data-t="${esc(x.id)}">
+      <span class="emo">${esc(x.e)}</span><span class="tx">${esc(x.t)}${x.sub ? `<small>${esc(x.sub)}</small>` : x.goal && !l ? '<small>¡objetivo de la semana!</small>' : ''}</span>
+      ${x.checks.length ? `<span class="checks">${x.checks.map((c, i) => `<span class="${l && (l.checks || []).includes(i) ? 'ok' : ''}">${l && (l.checks || []).includes(i) ? '✓ ' : ''}${esc(c)}</span>`).join('')}</span>` : ''}
+      ${l ? `<span class="stars">${starsTxt(l.stars)}</span>` : ''}${st}</button>`;
+  };
+  const days = [0, 1, 2, 3, 4, 5, 6].map((i) => { const d = addDays(mon, i); return `<span>${'LMXJVSD'[i]}<b class="${d === t ? 'hoy' : ''}">${d <= t ? kidStars(id, d, d) : '·'}</b></span>`; }).join('');
+  return `<div class="k-kid">
+    <aside class="kid-side" style="--tone:${kid.tone};--ink:${kid.ink}">${kDot(kid, 84)}<h2>${esc(kid.name)}</h2>
+      <div class="total"><b>${week} ⭐</b><p>de ${g.goal} esta semana</p></div>
+      <div class="barra"><i style="width:${Math.min(100, Math.round(week * 100 / (g.goal || 1)))}%"></i></div>
+      ${g.prize ? `<p class="premio">🎁 Con ${g.goal} ⭐: ${esc(g.prize)}</p>` : ''}
+      <div class="semanita">${days}</div></aside>
+    <div class="kid-main">${tasks.length ? MOMENTS.map(([m, lbl]) => { const ts = tasks.filter((x) => x.m === m); return ts.length ? `<p class="momento">${lbl}</p><div class="grid-t">${ts.map(card).join('')}</div>` : ''; }).join('') : '<p class="empty">Hoy no hay tareas apuntadas.</p>'}</div>
+  </div>`;
+}
+function kRate() {
+  const r = K().rate; if (!r) return '';
+  const kid = person(r.kid); const task = kidTasksFor(r.kid, today()).find((x) => x.id === r.t); if (!task) return '';
+  const l = kidLog(today(), r.kid, r.t);
+  if (l && l.validatedBy) return `<div class="k-over" data-a="krate-close"><div class="dlg">${kDot(kid, 64)}<h2>${esc(task.t)}</h2><div class="big-stars">${starsTxt(l.stars)}</div>
+    <p class="small" style="font-size:16px">Ya lo ha validado ${esc(person(l.validatedBy).name)}. Si hay que cambiarlo, desde el móvil.</p><button class="btn dark">Vale</button></div></div>`;
+  const checks = task.checks.length ? `<div class="checks big">${task.checks.map((c, i) => `<button data-a="kcheck" data-i="${i}" class="${r.checks.includes(i) ? 'ok' : ''}">${r.checks.includes(i) ? '✓ ' : ''}${esc(c)}</button>`).join('')}</div>` : '';
+  return `<div class="k-over"><div class="dlg">${kDot(kid, 64)}<h2>¡Bien, ${esc(kid.name)}! ¿Qué tal te ha salido «${esc(task.t)}»?</h2>${checks}
+    <div class="big-stars">${[1, 2, 3, 4, 5].map((n) => `<button data-a="kstar" data-n="${n}" class="${n <= r.stars ? 'on' : ''}" aria-label="${n} estrellas">★</button>`).join('')}</div>
+    <div class="niveles"><span>Regular</span><span>A medias</span><span>Bien</span><span>Muy bien</span><span>¡Genial!</span></div>
+    <div style="display:flex;gap:10px">${l ? '<button class="btn" data-a="kundo">Quitar</button>' : ''}<button class="btn" data-a="krate-close">Cancelar</button><button class="btn dark" data-a="ksave" ${r.stars ? '' : 'disabled'}>¡Listo!</button></div></div></div>`;
+}
+function kNightView() {
+  const tm = addDays(today(), 1); const its = itemsOn(tm); const p = pickup(tm);
+  return `<div class="k-night" data-a="kwake"><b class="k-clock">${nowHM()}</b>
+    <div class="card"><div class="label">Mañana · ${esc(DOWL[parse(tm).getDay()])} ${parse(tm).getDate()}</div>
+      ${p && p.clash ? '<p class="k-moch">⚠️ Nadie recoge a los niños</p>' : p ? `<p class="k-moch">🎒 Recoge ${esc(p.who)}</p>` : ''}
+      ${its.slice(0, 5).map((it) => `<div class="k-item"><span class="t">${esc(it.time || '—')}</span><span class="tx">${esc(it.title)}</span></div>`).join('') || '<p class="empty">Nada apuntado.</p>'}
+      ${isLectivo(tm) ? kMochila(tm) : ''}</div>
+    <p class="small">Toca la pantalla para usarla</p></div>`;
+}
+function cocina() {
+  const k = K();
+  if (kNight()) return kNightView();
+  const d = new Date();
+  const ks = kids();
+  const n = db.all('shopping').filter((x) => !x.done).length;
+  const tabs = [['hoy', '☀️ Hoy'], ['cal', '📅 Calendario'], ['menu', '🍽️ Menú'], ['compra', `🛒 Compra${n ? ` <small>(${n})</small>` : ''}`], ...ks.map((p) => [p.id, `${kDot(p, 26)} ${esc(p.name)}`])];
+  const act = k.v === 'dia' ? (k.from === 'mes' ? 'cal' : k.from || 'hoy') : k.v === 'mes' ? 'cal' : k.v;
+  const body = k.v === 'dia' ? kDia() : k.v === 'cal' ? kCal() : k.v === 'mes' ? kMes() : k.v === 'menu' ? kMenu() : k.v === 'compra' ? kCompra() : ks.some((p) => p.id === k.v) ? kKid(k.v) : kHoy();
+  const st = auth.status();
+  return `<div class="k-wrap">
+  <header class="k-top">
+    <button class="home" data-a="kgo" data-v="hoy" aria-label="Inicio"><span class="logo">${people().map((x) => `<span style="background:${x.tone};color:${x.ink}">${x.name[0]}</span>`).join('')}</span><small>INICIO</small></button>
+    <div class="fecha"><h1><em>${esc(cap(DOWL[d.getDay()]))},</em> ${d.getDate()} de ${esc(MONL[d.getMonth()])}</h1><p>${esc(saludo())} · ${wxHeader()}${!st.online ? ' · <b>sin conexión</b>' : st.error ? ' · <b>cambios sin guardar</b>' : ''}</p></div>
+    <div class="hora"><b>${nowHM()}</b></div>
+  </header>
+  <nav class="k-tabs">${tabs.map(([v, l]) => `<button class="k-tab" data-a="kgo" data-v="${v}" ${pressed(act === v)}>${l}</button>`).join('')}</nav>
+  <main class="k-screen">${body}</main>
+  ${kRate()}</div>`;
+}
+const KA = {
+  kgo: (el) => { const k = K(); k.v = el.dataset.v; k.rate = null; k.editDish = null; k.editDay = null; if (k.v === 'hoy') { k.week = 0; k.month = 0; } render(); },
+  kday: (el) => { const k = K(); if (k.v !== 'dia') k.from = el.dataset.from || (k.v === 'hoy' ? 'hoy' : k.v); k.v = 'dia'; k.date = el.dataset.d; k.editDay = null; render(); },
+  kweek: (el) => { const k = K(); const n = +el.dataset.n; k.week = n === 0 ? 0 : k.week + n; render(); },
+  kmonth: (el) => { const k = K(); k.month += +el.dataset.n; render(); },
+  kmweek: (el) => { const k = K(); k.mweek = (k.mweek || 0) + +el.dataset.n; k.editDish = null; render(); },
+  kadd: (el) => { K().editDay = el.dataset.d; render(); const i = document.querySelector('.k-add input'); if (i) i.focus(); },
+  'kdish-edit': (el) => { K().editDish = el.dataset.d; render(); },
+  'kdish-cancel': () => { K().editDish = null; render(); },
+  'kdish-new': (el) => kSetDish(el.dataset.d, null, null, true),
+  'kdish-pick': (el) => kSetDish(el.dataset.d, el.dataset.r),
+  krate: (el) => { const l = kidLog(today(), el.dataset.kid, el.dataset.t); K().rate = { kid: el.dataset.kid, t: el.dataset.t, stars: l ? l.stars : 0, checks: l ? [...(l.checks || [])] : [] }; render(); },
+  'krate-close': () => { K().rate = null; render(); },
+  kstar: (el) => { K().rate.stars = +el.dataset.n; render(); },
+  kcheck: (el) => { const r = K().rate; const i = +el.dataset.i; r.checks = r.checks.includes(i) ? r.checks.filter((x) => x !== i) : [...r.checks, i]; render(); },
+  ksave: () => {
+    const r = K().rate; if (!r || !r.stars) return;
+    const t = today(); const task = kidTasksFor(r.kid, t).find((x) => x.id === r.t); const id = logId(t, r.kid, r.t);
+    const o = { date: t, kid: r.kid, task: r.t, title: task ? task.t : r.t, stars: r.stars, checks: r.checks, at: Date.now() };
+    K().rate = null;
+    if (db.get('kidlog', id)) db.update('kidlog', id, o); else db.add('kidlog', { id, ...o });
+    render(); toast(r.stars >= 4 ? '¡Genial! ⭐' : 'Apuntado ⭐');
+  },
+  kundo: () => { const r = K().rate; K().rate = null; db.remove('kidlog', logId(today(), r.kid, r.t)); render(); },
+  kwake: () => { K().wake = Date.now() + 3 * 60 * 1000; render(); },
+  vstar: (el) => { const n = +el.dataset.n; db.update('kidlog', el.dataset.id, { stars: n, validatedBy: db.settings().user, changed: true, validatedAt: Date.now() }); toast('Corregido'); },
+  valid: (el) => { db.update('kidlog', el.dataset.id, { validatedBy: db.settings().user, validatedAt: Date.now() }); toast('Validado'); },
+  'valid-all': () => { for (const l of pendingValid()) db.update('kidlog', l.id, { validatedBy: db.settings().user, validatedAt: Date.now() }); toast('Todas validadas'); }
+};
+function kSetDish(date, recipeId, text, random) {
+  const key = mondayOf(date);
+  if (!db.raw().menu[key]) proposeWeek(key);
+  const week = db.clone(db.raw().menu[key]); const day = week.find((x) => x.date === date); if (!day) return;
+  const used = week.flatMap((x) => x.dishes.map((y) => y.recipe)).filter(Boolean);
+  let dish;
+  if (text) dish = { id: uid(), text };
+  else if (recipeId) dish = { id: uid(), recipe: recipeId };
+  else if (random) { const usedKinds = week.flatMap((x) => x.dishes.map((y) => recipe(y.recipe)?.kind)).filter(Boolean); const r = pickRecipe(day.meal, date, used, usedKinds); dish = { id: uid(), recipe: r ? r.id : randomRecipe(used) }; }
+  day.dishes = [dish];
+  saveWeek(key, week); K().editDish = null; render(); toast(`Plato: ${dishName(dish)}`);
+}
+const KF = {
+  kevent: (fd, f) => { const who = fd.get('who'); db.add('events', { title: fd.get('title').trim(), who: [who], date: f.dataset.d, time: fd.get('time') || '', endTime: '', place: '', repeat: 'no', days: [], until: '', schoolOnly: false }); K().editDay = null; toast('Apuntado'); },
+  kdish: (fd, f) => kSetDish(f.dataset.d, null, cap(fd.get('text').trim())),
+  kidgoal: (fd) => { db.set('kidGoal', { goal: Math.max(10, +fd.get('goal') || 150), prize: fd.get('prize').trim() }); toast('Guardado'); }
+};
+
+Object.assign(A, KA);
+Object.assign(F, KF);
 
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-a]');

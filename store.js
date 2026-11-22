@@ -12,7 +12,11 @@ export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
 
 const CACHE = 'casa-familia-cache-v2';
 // Colecciones con un id por elemento: cada elemento es una fila (así dos personas pueden tocar cosas distintas a la vez).
-const ITEM = ['shifts', 'events', 'tasks', 'shopping', 'recipes', 'school', 'meds', 'bills', 'gifts'];
+const ITEM = ['shifts', 'events', 'tasks', 'shopping', 'recipes', 'school', 'meds', 'bills', 'gifts', 'kidlog'];
+// La pantalla de la cocina (usuario «k») solo puede cambiar esto; la base de datos tampoco le deja más.
+const KITCHEN_COLS = new Set(['shopping', 'kidlog', 'events', 'tasks']);
+const KITCHEN_KV = new Set(['menu', 'shoppingHistory']);
+const kitchenCan = (col, id) => KITCHEN_COLS.has(col) || (col === 'kv' && KITCHEN_KV.has(id));
 const ITEMS = new Set(ITEM);
 const listeners = [];
 
@@ -84,9 +88,10 @@ async function flush() {
         if (rows.get(k) === v) continue;
         const [col, id] = [k.slice(0, k.indexOf('|')), k.slice(k.indexOf('|') + 1)];
         if (col === 'config' && !me.admin) continue; // las secciones solo las cambia Mario
+        if (me.person === 'k' && !kitchenCan(col, id)) continue;
         up.push({ col, id, data: JSON.parse(v) });
       }
-      for (const k of rows.keys()) if (!cur.has(k)) { const col = k.slice(0, k.indexOf('|')); if (col !== 'config') del.push(k); }
+      for (const k of rows.keys()) if (!cur.has(k)) { const col = k.slice(0, k.indexOf('|')); if (col !== 'config' && (me.person !== 'k' || col === 'shopping' || col === 'kidlog')) del.push(k); }
       for (let i = 0; i < up.length; i += 200) {
         const { error } = await sb.from('docs').upsert(up.slice(i, i + 200));
         if (error) throw error;

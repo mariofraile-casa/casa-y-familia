@@ -69,6 +69,9 @@ export function seed() {
       r('Lasaña de verduras', 'pasta', 'comida', [i(1, 'paq', 'Placas de lasaña'), i(2, 'ud', 'Calabacín'), i(1, 'ud', 'Berenjena'), i(1, 'bote', 'Tomate triturado'), i(200, 'g', 'Mozzarella')]),
     ],
     menu: {}, // { '2026-11-16': [{ date, meal, dishes: [recipeId|texto] }] } por semana (lunes)
+    // Tareas de los niños: { c: [{ id, t, e, m: manana|tarde|noche, days: [1..7], school, mochila, checks: [{ t, days }] }], a: [...] }
+    kidTasks: {},
+    kidGoal: { goal: 150, prize: '' },
     school: [],
     educamos: { status: 'sin-conectar', lastRead: null, message: '' },
     meds: [],
